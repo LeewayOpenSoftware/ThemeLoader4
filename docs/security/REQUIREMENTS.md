@@ -112,13 +112,78 @@ Corpus maxima are from the sketch (32 reference styles). A value here is normati
 |---|---|
 | R-PROC-1 | MUST: no Microsoft or third-party theme asset, and nothing extracted from one, enters the repository, a fixture, a fuzz seed or a crash artefact that is committed. Seeds are generated. A crashing input found on the reference corpus is reduced to a generated reproducer before it is committed. |
 | R-PROC-2 | MUST: every fuzz finding gets a regression test that cites the requirement id it violated. |
-| R-PROC-3 | MUST: L1 does not start before the L0 review is closed, L2 not before the S1 campaign report, integration not before S2. |
+| R-PROC-3 | MUST: L1 does not start before the L0 review is closed, L2 not before the S1 campaign report, integration not before S2. For DirectUI, see R-DUI-18. |
 | R-PROC-4 | SHOULD: each requirement in sections 3 to 5 has at least one negative test (an input that must be rejected for that reason alone). |
 
-## 9. Open points
+## 9. DirectUI: UIFILE parser and style sheets (milestone D1)
+
+Sections 1, 2 and 8 apply to `directui/` as they stand. Corpus figures are from `directui/docs/D0-RESEARCH.md` (127 UIFILE resources in 21 reference files).
+
+### 9.1 What a theme may supply
+
+| Id | Requirement |
+|---|---|
+| R-DUI-1 | MUST: from the `shellstyle.dll` of a style, the only DirectUI input is the resource of type `UIFILE` with id 1. Resources of any other type (`SHELL32_UIFILE`, `EXPLORERFRAME_UIFILE`, `SYSTEMCPL_UIFILE`, `USERCPL_UIFILE`, anything else) are never read from a style. |
+| R-DUI-2 | MUST: a theme supplies style sheets only. The accepted document is `<duixml>` with `<stylesheets>` and `<style resid>` children; an element tree, `macro`, `bind` or any layout content in theme input is a reject. The entry point that loads theme sheets has no path that returns an element tree. |
+| R-DUI-3 | MUST: a theme sheet may set visual properties only. The parser keeps a fixed allow-list of property names (colours, fonts, backgrounds, borders, padding, margins, alignment, sizes); an assignment to any other property (for example `content`, `id`, `class`, `layout`, `tooltip`, `shortcut`, `accname`, `accRole`, `accdefaction`, `enabled`, `visible`) is dropped and counted. A theme must not be able to relabel, hide or re-wire trusted UI. |
+| R-DUI-4 | MUST: layout parsing exists for resources owned by the consuming binary and for tests. It is a separate entry point, and no integration may feed it bytes that come from a style. |
+
+### 9.2 Input and XML subset
+
+| Id | Requirement |
+|---|---|
+| R-DUI-5 | MUST: the core takes `(const uint8_t *data, size_t size)` of one resource (R-GEN-1). It never opens a module. The caller obtains the bytes through a reader that meets section 3; `directui/` does not link or include `loader/`. |
+| R-DUI-6 | MUST: the input is not NUL-terminated and a NUL byte in it is a reject. Bytes below 0x80 are ASCII; bytes from 0x80 must form valid UTF-8, otherwise reject. |
+| R-DUI-7 | MUST: accepted XML is elements, attributes, comments and text. A DOCTYPE, an entity declaration, a processing instruction (including the XML declaration), a CDATA section, or an entity reference other than the five predefined ones (`lt`, `gt`, `amp`, `quot`, `apos`) is a reject. No external resource is ever fetched. |
+| R-DUI-8 | MUST: the tokenizer and the tree builder are iterative with an explicit stack bounded by the depth limit (R-GEN-6). A close tag that does not match, a duplicate attribute on one element, content after the root, or an unterminated construct is a reject. |
+| R-DUI-9 | MUST: tag, attribute and function names are ASCII, start with a letter or `_`, and are folded with ordinal ASCII case folding only. Values are never folded. No locale-dependent comparison anywhere. |
+| R-DUI-10 | MUST: an unknown tag used as a selector, and an unknown attribute, are kept as opaque names within the limits and counted; they do not fail the parse. |
+
+### 9.3 Value expressions
+
+| Id | Requirement |
+|---|---|
+| R-DUI-11 | MUST: the expression parser is iterative or depth-counted, with nesting and argument limits from 9.5. A known function is checked for argument count and kind; a mismatch is a reject. An unknown function is kept as an opaque call, never evaluated, and counted. |
+| R-DUI-12 | MUST: numbers are parsed with overflow checks (R-GEN-3) and range-checked: integers within plus or minus 1,000,000, colour components 0..255, `rp` lengths within the same integer range. Out of range is a reject. |
+| R-DUI-13 | MUST: `library(name)` is data, not a path. The name is at most 32 characters of `[A-Za-z0-9_.-]`, with no separator, colon or leading dot. The core never loads anything. An integration resolves it only against a fixed allow-list of system modules, maps the module as data from the system directory by full path, and reads resources through a reader that meets section 3. A name outside the allow-list makes the value unresolved, never a load attempt. |
+| R-DUI-14 | MUST: resource ids in `resstr`, `icon` and `graphic` are 1..65,535; `icon` and `graphic` sizes are 1..1,024. They are resolved only through the bounded reader. Images reach a decoder only after a bounded header check for their format (R-RES-3 for PNG; a DIB check with the same intent is written before any bitmap from a style is decoded). |
+| R-DUI-15 | MUST: theme-query arguments (`gtc`, `dtb`, `gtf`, `gtmar`, `gtmet`) are a class name of at most 59 characters and integers in the ranges of R-V4-5. `sysmetric(n)` takes an index from a fixed allow-list. Every value that comes back from the theme-query interface or a system metric is clamped before use (R-MOD-3). |
+| R-DUI-16 | MUST: nothing in a UIFILE is executed or expanded without a budget. If `macro` or `bind` expansion is ever implemented for consumer-owned layouts, it is non-recursive and counts every produced node against the node limit. |
+
+### 9.4 Process
+
+| Id | Requirement |
+|---|---|
+| R-DUI-17 | MUST: libFuzzer harnesses for the XML tokenizer and for the expression parser exist in the same commits as those modules, build with ASan + UBSan, and run in CI on generated seeds (R-PROC-1). |
+| R-DUI-18 | MUST: D1 is not used on files not built by us before its fuzz campaign report and security review are closed. |
+
+### 9.5 Limits (per UIFILE resource)
+
+| Quantity | Corpus | Limit |
+|---|---|---|
+| Resource size | 89,116 bytes maximum | 512 KB |
+| Element nesting depth | 14 | 32 |
+| Elements (nodes) | 6,280 `element` tags over 127 resources | 16,384 |
+| Attributes per element | not measured | 64 |
+| Attributes in total | `id` alone 7,516 over the corpus | 65,536 |
+| Name length (tag, attribute, function, resid) | not measured | 64 characters |
+| Attribute value length | not measured | 4,096 bytes |
+| Style sheets | 415 over the corpus | 512 |
+| Selectors + conditions | 2,152 + 9,084 over the corpus | 16,384 |
+| Expression nesting | not measured (shapes show 2 to 3) | 8 |
+| Arguments per call | 4 observed | 16 |
+| Expression nodes per value | not measured | 256 |
+| Comments | 52 over the corpus | counted in the size limit only |
+
+## 10. Open points
 
 - R-V4-3, R-V4-4: two format facts the sketch must state (VMAP prefix unit, walk end on unaligned sizes).
 - R-V4-10: `BCMAP` semantics (sketch open item 1).
 - R-RES-3: the allowed IHDR set must be confirmed on the corpus (colour types and interlace actually used).
 - R-PE-8: strict ordering must be confirmed on the corpus by the L0 corpus run; if a reference style is unordered, the rule becomes "linear scan, first match" by commit here.
 - Record types 240, 241, 243 and the records with a non-zero reference on value types are dropped by R-V4-8 until the sketch explains them.
+- R-DUI-3: the allow-list of visual properties is fixed from the properties the stock style sheets actually set (D0 lists attribute names for layouts and sheets together); Stanley measures it on the corpus, sheets only, before D1 freezes the list.
+- R-DUI-6: whether any reference UIFILE holds bytes from 0x80 that are not UTF-8 (D0 says "UTF-8/ANSI"). If one does, the rule is revisited here.
+- R-DUI-7: whether any reference style sheet needs CDATA or a numeric character reference.
+- Section 9.5: the rows marked "not measured" are set with headroom from the shapes in D0; the D1 corpus runner reports the real maxima and the limits are then confirmed or tightened by commit.
+- R-DUI-14: stock `shellstyle.dll` carries `RT_BITMAP` images. No bitmap from a style is decoded in D1; the DIB header check is specified before the milestone that renders them.
