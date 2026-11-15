@@ -37,3 +37,7 @@ tl4_add_fuzzer(fuzz_xml SOURCES fuzz/fuzz_xml.c LIBS tl4_directui_core)
 tl4_add_fuzzer(fuzz_value SOURCES fuzz/fuzz_value.c LIBS tl4_directui_core)
 tl4_add_fuzzer(fuzz_sheet SOURCES fuzz/fuzz_sheet.c LIBS tl4_directui_core)
 tl4_add_fuzzer(fuzz_layout SOURCES fuzz/fuzz_layout.c LIBS tl4_directui_core)
+if(TARGET tl4_directui_core_testing)
+    # R-GEN-11: needs the between-pass hooks, which only the testing build of the core has
+    tl4_add_fuzzer(fuzz_two_pass SOURCES fuzz/fuzz_two_pass.c LIBS tl4_directui_core_testing)
+endif()
