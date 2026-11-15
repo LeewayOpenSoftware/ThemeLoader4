@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <tl4/loader/model.h>
+#include <tl4/loader/png.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -76,6 +77,7 @@ struct expected {
     unsigned long size, version, cmap, bcmap, records, rmap, images, streams, blocks;
     unsigned long partstates, dup_props, dup_names, model_bytes;   /* the model's columns (L2) */
     unsigned long unresolved_bp;   /* unresolved references in basis points of the records (R-V4-12 allows 100) */
+    unsigned long images_ok, max_pixels, max_idat, pixels_total;   /* the chunk walker's columns (L3) */
     char name[128];
     char expect[32];     /* "ok" or the status name the validator must return */
 };
@@ -92,9 +94,10 @@ static int load_expected(const char *path)
     {
         struct expected *e = &table[ntable];
         if (line[0] == '#' || line[0] == 's' || line[0] == '\n' || ntable >= 128) continue;
-        if (sscanf(line, "%64[0-9a-f],%lu,%127[^,],%31[^,],%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu", e->sha, &e->size, e->name, e->expect,
+        if (sscanf(line, "%64[0-9a-f],%lu,%127[^,],%31[^,],%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu", e->sha, &e->size, e->name, e->expect,
                    &e->version, &e->cmap, &e->bcmap, &e->records, &e->rmap, &e->images, &e->streams, &e->blocks,
-                   &e->partstates, &e->dup_props, &e->dup_names, &e->model_bytes, &e->unresolved_bp) == 17)
+                   &e->partstates, &e->dup_props, &e->dup_names, &e->model_bytes, &e->unresolved_bp,
+                   &e->images_ok, &e->max_pixels, &e->max_idat, &e->pixels_total) == 21)
             ntable++;
     }
     fclose(f);
@@ -135,7 +138,29 @@ struct totals {
     int files, ok, mismatched, failed, unknown;
     tl4_v4_stats max;
     unsigned long max_size;
+    unsigned long max_pixels, max_idat, max_chunks, max_side, images_failed;   /* over every image of every style */
 };
+
+/* Every IMAGE and STREAM resource through the chunk walker (R-RES-3/4/5) */
+struct image_walk { unsigned long ok, failed, max_pixels, max_idat, max_chunks, max_side, pixels_total; tl4_status first_failure; };
+static int image_cb(const tl4_resource *res, void *context)
+{
+    struct image_walk *w = (struct image_walk *)context;
+    tl4_res_name image = tl4_res_ascii("IMAGE"), stream = tl4_res_ascii("STREAM");
+    tl4_png_info info;
+    tl4_status st;
+    if (!tl4_res_name_equal(&res->type, &image) && !tl4_res_name_equal(&res->type, &stream)) return 0;
+    st = tl4_png_check(res->data, res->size, &info);
+    if (st != TL4_OK) { if (!w->failed) w->first_failure = st; w->failed++; return 0; }
+    w->ok++;
+    if (info.pixels > w->max_pixels) w->max_pixels = (unsigned long)info.pixels;
+    if (info.idat_bytes > w->max_idat) w->max_idat = info.idat_bytes;
+    if (info.chunks > w->max_chunks) w->max_chunks = info.chunks;
+    if (info.width > w->max_side) w->max_side = info.width;
+    if (info.height > w->max_side) w->max_side = info.height;
+    w->pixels_total += (unsigned long)info.pixels;
+    return 0;
+}
 
 static void max_u(uint32_t *m, uint32_t v) { if (v > *m) *m = v; }
 
@@ -186,6 +211,10 @@ static void check_file(const char *path, const char *name, struct totals *t)
         unsigned long unresolved = s.unresolved_fonts + s.unresolved_filenames + s.unresolved_diskstreams + s.unresolved_strings;
         unsigned long total = s.variant.records + s.rmap.records;
         unsigned long unresolved_bp = total ? unresolved * 10000ul / total : 0;
+        struct image_walk w;
+        int stopped = 0;
+        memset(&w, 0, sizeof(w));
+        if (tl4_pe_enum(&pe, image_cb, &w, &stopped) != TL4_OK) w.failed++;
         if (mst != TL4_OK) { printf("%-36s %s  MODEL BUILD FAILED: %s\n", name, sha, tl4_status_name(mst)); t->failed++; free(buf); free(mdata); free(data); return; }
         if (e)
         {
@@ -195,24 +224,33 @@ static void check_file(const char *path, const char *name, struct totals *t)
                    e->images != s.images || e->streams != s.streams || e->blocks != s.string_blocks ||
                    e->partstates != model.counts.partstates || e->dup_props != model.counts.duplicate_props ||
                    e->dup_names != model.counts.duplicate_names || e->model_bytes != (unsigned long)need ||
-                   e->unresolved_bp != unresolved_bp || model.counts.unresolved != unresolved);
+                   e->unresolved_bp != unresolved_bp || model.counts.unresolved != unresolved ||
+                   e->images_ok != w.ok || e->max_pixels != w.max_pixels || e->max_idat != w.max_idat || e->pixels_total != w.pixels_total);
             if (bad) t->mismatched++; else t->ok++;
         }
         else
             t->unknown++;
-        printf("%-36s %s  ok  cmap %u (desc %u) bcmap %u depth %u  records %u (+%u unknown, +%u ref-on-value)  rmap %u  images %u streams %u blocks %u  fonts %u/%u filenames %u/%u diskstreams %u/%u strings %u/%u  partstates %u classes %u  model: partstates %u props %u dup %u dupnames %u bytes %lu globals %u sysmetrics %u unresolved %u (%lu bp)%s%s\n",
+        printf("%-36s %s  ok  cmap %u (desc %u) bcmap %u depth %u  records %u (+%u unknown, +%u ref-on-value)  rmap %u  images %u streams %u blocks %u  fonts %u/%u filenames %u/%u diskstreams %u/%u strings %u/%u  partstates %u classes %u  model: partstates %u props %u dup %u dupnames %u bytes %lu globals %u sysmetrics %u unresolved %u (%lu bp)  png: ok %lu failed %lu%s%s max %lu px, %lu idat, %lu chunks, side %lu, total %lu px%s%s\n",
                name, sha, s.cmap_names, s.descriptors, s.bcmap_entries, s.bcmap_max_depth, s.variant.records,
                s.variant.dropped_unknown_type, s.variant.dropped_ref_on_value, s.rmap.records, s.images, s.streams, s.string_blocks,
                s.fonts - s.unresolved_fonts, s.fonts, s.filenames - s.unresolved_filenames, s.filenames,
                s.diskstreams - s.unresolved_diskstreams, s.diskstreams, s.strings - s.unresolved_strings, s.strings, s.variant.partstates, s.variant.classes,
                model.counts.partstates, model.counts.props, model.counts.duplicate_props, model.counts.duplicate_names, (unsigned long)need,
                model.counts.globals, model.counts.sysmetrics, model.counts.unresolved, unresolved_bp,
+               w.ok, w.failed, w.failed ? " (first: " : "", w.failed ? tl4_status_name(w.first_failure) : "",
+               w.max_pixels, w.max_idat, w.max_chunks, w.max_side, w.pixels_total,
                e ? "" : "  (not in the expected table)", bad ? "  MISMATCH with the expected table" : "");
         /* a ready row for the expected table, so a regeneration copies rather than retypes */
-        printf("csvrow: %s,%lu,%s,ok,4,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%lu,%lu\n", sha, (unsigned long)size, name, s.cmap_names, s.bcmap_entries,
+        printf("csvrow: %s,%lu,%s,ok,4,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%lu,%lu,%lu,%lu,%lu,%lu\n", sha, (unsigned long)size, name, s.cmap_names, s.bcmap_entries,
                s.variant.records + s.variant.dropped_unknown_type + s.variant.dropped_ref_on_value,
                s.rmap.records + s.rmap.dropped_unknown_type + s.rmap.dropped_ref_on_value, s.images, s.streams, s.string_blocks,
-               model.counts.partstates, model.counts.duplicate_props, model.counts.duplicate_names, (unsigned long)need, unresolved_bp);
+               model.counts.partstates, model.counts.duplicate_props, model.counts.duplicate_names, (unsigned long)need, unresolved_bp,
+               w.ok, w.max_pixels, w.max_idat, w.pixels_total);
+        if (w.failed) t->images_failed += w.failed;
+        if (w.max_pixels > t->max_pixels) t->max_pixels = w.max_pixels;
+        if (w.max_idat > t->max_idat) t->max_idat = w.max_idat;
+        if (w.max_chunks > t->max_chunks) t->max_chunks = w.max_chunks;
+        if (w.max_side > t->max_side) t->max_side = w.max_side;
         free(buf);
         max_u(&t->max.cmap_names, s.cmap_names); max_u(&t->max.bcmap_max_depth, s.bcmap_max_depth);
         max_u(&t->max.variant.records, s.variant.records + s.variant.dropped_unknown_type + s.variant.dropped_ref_on_value);
@@ -273,6 +311,8 @@ int main(int argc, char **argv)
     printf("maxima: file %lu bytes, CMAP names %u, BCMAP depth %u, VARIANT records %u, RMAP records %u, part-states %u, classes %u, cbData %u, part %u, state %u, images %u, streams %u\n",
            t.max_size, t.max.cmap_names, t.max.bcmap_max_depth, t.max.variant.records, t.max.rmap.records, t.max.variant.partstates,
            t.max.variant.classes, t.max.variant.max_cb, t.max.variant.max_part, t.max.variant.max_state, t.max.images, t.max.streams);
+    printf("images: %lu failed the chunk walker; maxima: %lu pixels, %lu compressed bytes, %lu chunks, side %lu\n",
+           t.images_failed, t.max_pixels, t.max_idat, t.max_chunks, t.max_side);
     if (t.files == 0) { printf("no .msstyles under %s\n", dir); return 1; }
-    return (t.failed || t.mismatched) ? 1 : 0;
+    return (t.failed || t.mismatched || t.images_failed) ? 1 : 0;
 }
