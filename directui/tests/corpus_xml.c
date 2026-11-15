@@ -7,7 +7,8 @@
  * The reference files never enter the repository (R-PROC-1). Until the bounded PE/resource
  * reader of L0 exists, the runner reads resources extracted outside the repository:
  * $TL4_CORPUS_DIR/uifile.list names one extracted resource file per line (relative to
- * TL4_CORPUS_DIR). Without TL4_CORPUS_DIR the test is skipped (exit code 77).
+ * TL4_CORPUS_DIR). Skipped (exit code 77) without TL4_CORPUS_DIR, without uifile.list (a
+ * directory holding only .msstyles/.mui), or when the list names no resource.
  */
 
 #include <stdio.h>
@@ -66,10 +67,16 @@ main(void)
         printf("TL4_CORPUS_DIR not set: skipped\n");
         return 77;
     }
-    if (snprintf(path, sizeof(path), "%s/uifile.list", dir) >= (int)sizeof(path) || !(list = fopen(path, "r")))
+    if (snprintf(path, sizeof(path), "%s/uifile.list", dir) >= (int)sizeof(path))
     {
-        fprintf(stderr, "cannot open %s/uifile.list\n", dir);
+        fprintf(stderr, "TL4_CORPUS_DIR path too long\n");
         return 1;
+    }
+    if (!(list = fopen(path, "r")))
+    {
+        /* The directory may hold another component's corpus only (.msstyles, .mui) */
+        printf("no %s/uifile.list (no extracted UIFILE resources): skipped\n", dir);
+        return 77;
     }
     while (fgets(line, sizeof(line), list))
     {
@@ -117,6 +124,11 @@ main(void)
         free(data);
     }
     fclose(list);
+    if (!total)
+    {
+        printf("uifile.list names no resource: skipped\n");
+        return 77;
+    }
 
     printf("resources %u, rejected %u\n", total, rejected);
     printf("maxima per resource: size %zu, elements %u, attributes %u, depth %u, "
