@@ -79,7 +79,10 @@ static tl4_status one_image(const tl4_pe *pe, uint32_t id, uint32_t language, ui
             for (i = 0; i < n; i++) PROMISE(out[i] != 0 && out[i] == rd16(pe->base + off + 2u * i));
         }
         else
-            PROMISE(n2 == 0 && out[0] == 0);
+        {
+            PROMISE(n2 == 0);
+            for (i = 0; i <= n; i++) PROMISE(out[i] == 0);                   /* the whole copied range is cleared */
+        }
         PROMISE(tl4_strings_get(pe, id, language, out2, n, &n2) == TL4_E_BUFFER && n2 == 0 && (n == 0 || out2[0] == 0));
     }
     else

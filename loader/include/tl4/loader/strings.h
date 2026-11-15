@@ -50,8 +50,8 @@ tl4_status tl4_strings_locate(const tl4_pe *pe, uint32_t id, uint32_t language, 
 
 /* Copy string `id` into out[cap_chars] as a 0-terminated UTF-16 string, *chars its count without the terminator. The
  * capacity needed is chars + 1; a smaller one (0 included) is TL4_E_BUFFER and nothing is truncated (R-GEN-5). One copy,
- * then the checks on the copy: count at most TL4_STR_MAX_CHARS, no code unit 0 (TL4_E_STR_BLOCK). On any failure *chars
- * is 0 and out[0] is 0 when there is an out[0]. */
+ * then the checks on the copy: count at most TL4_STR_MAX_CHARS, no code unit 0 (TL4_E_STR_BLOCK, with the whole copied
+ * range out[0..chars] cleared). On any failure *chars is 0 and out[0] is 0 when there is an out[0]. */
 tl4_status tl4_strings_get(const tl4_pe *pe, uint32_t id, uint32_t language, uint16_t *out, uint32_t cap_chars, uint32_t *chars);
 
 /* The pair a consumer holds: the style and, when it has one, the strings module it opened under R-RES-1 (T-STORE-3).

@@ -370,10 +370,11 @@ static void test_changed_bytes(void)
     CHECK_STATUS(tl4_strings_locate(&pe, 4, TL4_STR_LANG_LOWEST, &off, &chars), TL4_OK);
     memcpy(image + base, blk_a, n);
     /* a code unit 0 written into the wanted string after the check: the range is fine, the copy is refused (MUST 1) */
-    put16(image + base + slot_off(blk_a, 5) + 2, 0);
+    put16(image + base + slot_off(blk_a, 5) + 4, 0);                                       /* "s5": the second unit */
     CHECK_STATUS(tl4_strings_locate(&pe, 5, TL4_STR_LANG_LOWEST, &off, &chars), TL4_OK);
-    out[0] = 0x41;
-    CHECK_STATUS(tl4_strings_get(&pe, 5, TL4_STR_LANG_LOWEST, out, N(out), &chars), TL4_E_STR_BLOCK); CHECK(chars == 0 && out[0] == 0);
+    memset(out, 0x41, 8);
+    CHECK_STATUS(tl4_strings_get(&pe, 5, TL4_STR_LANG_LOWEST, out, N(out), &chars), TL4_E_STR_BLOCK);
+    CHECK(chars == 0 && out[0] == 0 && out[1] == 0 && out[2] == 0 && out[3] == 0x4141);    /* the whole copied range, nothing beyond */
     memcpy(image + base, blk_a, n);
     CHECK_STATUS(tl4_strings_get(&pe, 5, TL4_STR_LANG_LOWEST, out, N(out), &chars), TL4_OK); CHECK(eq_ascii(out, chars, "s5"));
 }

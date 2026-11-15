@@ -155,7 +155,11 @@ tl4_status tl4_strings_get(const tl4_pe *pe, uint32_t id, uint32_t language, uin
     for (i = 0; i < n; i++) out[i] = (uint16_t)((uint32_t)pe->base[off + 2u * i] | ((uint32_t)pe->base[off + 2u * i + 1] << 8));
     out[n] = 0;
     for (i = 0; i < n; i++)
-        if (out[i] == 0) { out[0] = 0; return TL4_E_STR_BLOCK; }
+        if (out[i] == 0)
+        {
+            memset(out, 0, 2u * ((size_t)n + 1u));           /* R-GEN-5: a failed call leaves no partial text behind */
+            return TL4_E_STR_BLOCK;
+        }
     *chars = n;
     return TL4_OK;
 }
