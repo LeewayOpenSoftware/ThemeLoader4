@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <tl4/loader/model.h>
+#include <tl4/loader/range.h>
 
 #define PROMISE(cond) do { if (!(cond)) abort(); } while (0)
 
@@ -59,6 +60,23 @@ static void queries(const tl4_model *m, const uint8_t *q, int changed)
         if (tl4_get_font(m, p, &f) == TL4_OK) PROMISE(f.face_chars >= 1 && f.face_chars <= 31 && f.points >= 1 && f.points <= 255 && f.quality <= 6);
         if (tl4_get_filename(m, p, &id, &off, &size) == TL4_OK) PROMISE(id == p->reference && off <= pe->size && size <= pe->size - off);
         if (tl4_get_diskstream(m, p, &id, &off, &size) == TL4_OK) PROMISE(id == p->reference && off <= pe->size && size <= pe->size - off);
+        /* R-MOD-7: the range function on every value a getter hands out: one of two answers, the same twice, no crash */
+        {
+            enum tl4_range_row row = tl4_range_row(p->type, p->name_id);
+            tl4_status r1, r2;
+            PROMISE(row == tl4_range_row(p->type, p->name_id) && row <= TL4_RANGE_NEVER);
+            if (tl4_get_int(m, p, &v) == TL4_OK || tl4_get_bool(m, p, &v) == TL4_OK || tl4_get_enum(m, p, &v) == TL4_OK)
+            {
+                r1 = tl4_range_check(p->type, p->name_id, &v, 1); r2 = tl4_range_check(p->type, p->name_id, &v, 1);
+                PROMISE((r1 == TL4_OK || r1 == TL4_E_RANGE) && r1 == r2);
+            }
+            if (tl4_get_position(m, p, a) == TL4_OK) { r1 = tl4_range_check(p->type, p->name_id, a, 2); PROMISE(r1 == TL4_OK || r1 == TL4_E_RANGE); }
+            if (tl4_get_rect(m, p, a) == TL4_OK || tl4_get_margins(m, p, a) == TL4_OK) { r1 = tl4_range_check(p->type, p->name_id, a, 4); PROMISE(r1 == TL4_OK || r1 == TL4_E_RANGE); }
+            if (tl4_get_intlist(m, p, a, 402, &cnt) == TL4_OK) { r1 = tl4_range_check(p->type, p->name_id, a, cnt); PROMISE(r1 == TL4_OK || r1 == TL4_E_RANGE); }
+            if (tl4_get_font(m, p, &f) == TL4_OK) PROMISE(tl4_range_check_font(&f) == TL4_OK);                  /* the parser enforces R-RES-2 already */
+            if (tl4_get_string(m, p, str, 128, &chars) == TL4_OK) PROMISE(tl4_range_check_string(chars) == TL4_OK);  /* 1..127 here */
+            if (row == TL4_RANGE_NEVER) PROMISE(tl4_range_check(p->type, p->name_id, 0, 0) == TL4_E_RANGE);
+        }
         (void)tl4_model_part_defined(m, cls, part);
     }
     /* names: every ordinal readable (unchanged input), and the lookup by name finds the lowest ordinal of its name */
