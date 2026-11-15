@@ -169,6 +169,52 @@ static int image_cb(const tl4_resource *res, void *context)
 
 static void max_u(uint32_t *m, uint32_t v) { if (v > *m) *m = v; }
 
+/* R-MOD-7: what the range function rejected on the corpus, by property, and what the getters refused, by type and
+ * status: numbers only, the reviewer decides the table from them */
+struct range_reject { uint32_t type, name_id, row; unsigned long count; int32_t min, max; };
+struct range_error { uint32_t type; tl4_status status; unsigned long count; };
+static struct range_reject rejects[64];
+static struct range_error errors[64];
+static unsigned nrejects, nerrors, rejects_dropped, errors_dropped;
+
+static void range_note_reject(uint32_t type, uint32_t name_id, unsigned row, int32_t value)
+{
+    unsigned i;
+    for (i = 0; i < nrejects; i++)
+        if (rejects[i].type == type && rejects[i].name_id == name_id)
+        {
+            rejects[i].count++;
+            if (value < rejects[i].min) rejects[i].min = value;
+            if (value > rejects[i].max) rejects[i].max = value;
+            return;
+        }
+    if (nrejects == sizeof(rejects) / sizeof(rejects[0])) { rejects_dropped++; return; }
+    rejects[nrejects].type = type; rejects[nrejects].name_id = name_id; rejects[nrejects].row = row;
+    rejects[nrejects].count = 1; rejects[nrejects].min = value; rejects[nrejects].max = value;
+    nrejects++;
+}
+
+static void range_note_error(uint32_t type, tl4_status status)
+{
+    unsigned i;
+    for (i = 0; i < nerrors; i++)
+        if (errors[i].type == type && errors[i].status == status) { errors[i].count++; return; }
+    if (nerrors == sizeof(errors) / sizeof(errors[0])) { errors_dropped++; return; }
+    errors[nerrors].type = type; errors[nerrors].status = status; errors[nerrors].count = 1;
+    nerrors++;
+}
+
+static void range_report(void)
+{
+    unsigned i;
+    for (i = 0; i < nrejects; i++)
+        printf("  rejected: type %u property %u (row %u): %lu values, min %ld, max %ld\n", rejects[i].type, rejects[i].name_id,
+               rejects[i].row, rejects[i].count, (long)rejects[i].min, (long)rejects[i].max);
+    for (i = 0; i < nerrors; i++)
+        printf("  getter error: type %u -> %s: %lu properties\n", errors[i].type, tl4_status_name(errors[i].status), errors[i].count);
+    if (rejects_dropped || errors_dropped) printf("  (%u reject kinds and %u error kinds beyond the table)\n", rejects_dropped, errors_dropped);
+}
+
 static void check_file(const char *path, const char *name, struct totals *t)
 {
     size_t size, msize = 0;
@@ -250,15 +296,25 @@ static void check_file(const char *path, const char *name, struct totals *t)
                     case TL4_V4_DISKSTREAM: gs = tl4_get_diskstream(&model, p, &id, &off, &sz); break;
                     default: break;                       /* STREAM, BITMAPREF, HBITMAP, FLOAT...: the range row alone */
                 }
-                if (gs != TL4_OK) { errs++; continue; }
+                if (gs != TL4_OK) { errs++; range_note_error(p->type, gs); continue; }
                 chk++;
                 if (p->type == TL4_V4_STRING) rs = tl4_range_check_string(chars);
                 else if (p->type == TL4_V4_FONT) rs = tl4_range_check_font(&fnt);
                 else if (p->type == TL4_V4_INTLIST) rs = tl4_range_check(p->type, p->name_id, list, c);
                 else rs = tl4_range_check(p->type, p->name_id, v, c);
-                if (rs != TL4_OK && rej++ < 8)
-                    printf("%-36s range: REJECTED type %u property %u (class %u part %u state %u, row %u): %s\n", "",
-                           p->type, p->name_id, p->class_ordinal, p->part, p->state, (unsigned)tl4_range_row(p->type, p->name_id), tl4_status_name(rs));
+                if (rs != TL4_OK)
+                {
+                    /* the offending value: the first component or entry outside its row, as a number only */
+                    enum tl4_range_row row = tl4_range_row(p->type, p->name_id);
+                    const int32_t *vals = p->type == TL4_V4_INTLIST ? list : v;
+                    uint32_t n = p->type == TL4_V4_STRING ? 0 : p->type == TL4_V4_FONT ? 0 : c, j;
+                    int32_t offending = p->type == TL4_V4_STRING ? (int32_t)chars : p->type == TL4_V4_FONT ? fnt.points : 0;
+                    for (j = 0; j < n; j++) if (tl4_range_check(p->type, p->name_id, &vals[j], 1) != TL4_OK || row == TL4_RANGE_NEVER) { offending = vals[j]; break; }
+                    if (rej++ < 3)
+                        printf("%-36s range: REJECTED type %u property %u (class %u part %u state %u, row %u) value %ld\n", "",
+                               p->type, p->name_id, p->class_ordinal, p->part, p->state, (unsigned)row, (long)offending);
+                    range_note_reject(p->type, p->name_id, (unsigned)row, offending);
+                }
             }
             printf("%-36s range: %u properties checked, %u rejected, %u getter errors\n", "", chk, rej, errs);
             t->range_checked += chk; t->range_rejected += rej; t->range_errors += errs;
@@ -379,6 +435,7 @@ int main(int argc, char **argv)
            t.str_entries, t.str_strings, t.max_str.blocks, t.max_str.max_chars, t.max_str.max_languages);
     printf("ranges (section 6.1): %lu properties checked, %lu rejected, %lu getter errors%s\n",
            t.range_checked, t.range_rejected, t.range_errors, t.range_rejected ? "  <-- a rejected corpus value goes to the reviewer" : "");
+    range_report();
     if (t.files == 0) { printf("no .msstyles under %s\n", dir); return 1; }
     return (t.failed || t.mismatched || t.images_failed) ? 1 : 0;
 }
