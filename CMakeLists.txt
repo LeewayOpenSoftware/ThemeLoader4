@@ -10,7 +10,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 option(TL4_BUILD_LOADER "Build the version-4 style loader" ON)
 option(TL4_BUILD_DIRECTUI "Build the DirectUI component" ON)
 option(TL4_BUILD_TRUST "Build the trust decisions of the I1 integration" ON)
-option(TL4_BUILD_TESTS"Build the unit tests and corpus runners" ON)
+option(TL4_BUILD_TESTS "Build the unit tests and corpus runners" ON)
 option(TL4_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(TL4_FUZZ "Build the libFuzzer harnesses (Clang only)" OFF)
 

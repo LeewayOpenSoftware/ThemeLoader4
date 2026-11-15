@@ -38,6 +38,10 @@ typedef enum tl4_trust_reason {
     TL4_TRUST_W_GRANT            /* an effective allow ACE gives a write-class right to an ordinary principal */
 } tl4_trust_reason;
 
+/* Every result other than TL4_TRUST_SAFE means user-writable: the reasons exist for logging, never for a decision.
+ * A descriptor larger than TL4_TRUST_MAX_SD is TL4_TRUST_W_UNREADABLE. */
+#define TL4_TRUST_MAX_SD (128u * 1024u)
+
 /* Decide whether a security descriptor makes the object user-writable. `sd`/`size` is a self-relative descriptor as
  * GetSecurityInfo / NtQuerySecurityObject return it (NULL = could not be read). Returns TL4_TRUST_SAFE only when the
  * owner is trusted, a DACL is present and not NULL, every ACE is well-formed and of a known type, and no effective
@@ -102,7 +106,7 @@ typedef enum tl4_trust_class {
     TL4_TRUST_ORDINARY = 0,
     TL4_TRUST_P_INCOMPLETE,      /* a query failed or an input is out of range (T-DEF-4, T-FAIL-3) */
     TL4_TRUST_P_SERVICE_USER,    /* SYSTEM, LocalService or NetworkService */
-    TL4_TRUST_P_ADMIN_ENABLED,   /* Administrators present and enabled, not deny-only */
+    TL4_TRUST_P_ADMINISTRATORS,  /* Administrators present and not deny-only, enabled or not (policy v5) */
     TL4_TRUST_P_ELEVATED,        /* elevation type full, or TokenIsElevated */
     TL4_TRUST_P_INTEGRITY,       /* integrity high or above */
     TL4_TRUST_P_SERVICE_START,   /* started by the service control manager */
@@ -114,6 +118,13 @@ typedef enum tl4_trust_class {
 /* Classify the process from its facts. The first clause that holds is returned (the order above); any clause makes
  * the process privileged. NULL facts, a malformed SID, or counts over the limits give TL4_TRUST_P_INCOMPLETE. */
 tl4_trust_class tl4_trust_classify(const tl4_trust_facts *facts);
+
+/* The reason returned above is for logging only: a caller tests "!= TL4_TRUST_ORDINARY" and nothing else. It must
+ * not be used for the T-PRIV-2 decision (a service user that also matches an earlier clause is reported under that
+ * clause); this function makes that decision. It returns 1 when the process must read no user setting and use the
+ * machine default style: the token user is SYSTEM, LocalService or NetworkService, or the service control manager
+ * started the process. Incomplete or malformed facts give 1 as well (T-FAIL-3). */
+int tl4_trust_uses_machine_default(const tl4_trust_facts *facts);
 
 /* A binary SID's length when it is well-formed inside `size` (revision 1, at most 15 sub-authorities), else 0. */
 size_t tl4_trust_sid_length(const uint8_t *sid, size_t size);

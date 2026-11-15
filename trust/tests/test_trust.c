@@ -238,6 +238,18 @@ test_writable(void)
         n = build(&ba, 1, a, N(a));
         put32(sdbuf + 4, 0xFFFFFFF0u);                       /* owner offset outside */
         CHECK_EQ(w(n, T_FILE, 0), TL4_TRUST_W_UNREADABLE);
+        n = build(&ba, 1, a, N(a));
+        put16(sdbuf + 20 + ba.n + 8 + 2, 26);                /* ACE size not a multiple of 4 (SID 16 + 8 + 2) */
+        put16(sdbuf + 20 + ba.n + 2, 34);                    /* ACL size follows it */
+        CHECK_EQ(w(n + 2, T_FILE, 0), TL4_TRUST_W_UNREADABLE);
+    }
+    {
+        static uint8_t big[TL4_TRUST_MAX_SD + 1];
+        ACE_T a[] = { { 0, 0, READ_, BU } };
+        n = build(&ba, 1, a, N(a));
+        memcpy(big, sdbuf, n);
+        CHECK_EQ(tl4_trust_sd_writable(big, TL4_TRUST_MAX_SD, T_FILE, 0), TL4_TRUST_SAFE);
+        CHECK_EQ(tl4_trust_sd_writable(big, TL4_TRUST_MAX_SD + 1, T_FILE, 0), TL4_TRUST_W_UNREADABLE);
     }
 
     /* the descriptors the LiberNT image applies (boot/bootdata/filesecurity.txt) */
@@ -343,10 +355,11 @@ test_classify(void)
     f = ordinary(); f.user.sid = sy.b; f.user.size = sy.n; CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_P_SERVICE_USER);
     f = ordinary(); f.user.sid = ls.b; f.user.size = ls.n; CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_P_SERVICE_USER);
     f = ordinary(); f.user.sid = ns.b; f.user.size = ns.n; CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_P_SERVICE_USER);
-    f = ordinary(); groups[1].attributes = TL4_SE_GROUP_ENABLED; CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_P_ADMIN_ENABLED);
+    f = ordinary(); groups[1].attributes = TL4_SE_GROUP_ENABLED; CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_P_ADMINISTRATORS);
+    f = ordinary(); groups[1].attributes = 0;                  /* present but disabled: privileged (policy v5) */
+    CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_P_ADMINISTRATORS);
     f = ordinary(); groups[1].attributes = TL4_SE_GROUP_ENABLED | TL4_SE_GROUP_USE_FOR_DENY_ONLY;
     CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_ORDINARY);
-    f = ordinary(); groups[1].attributes = 0; CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_ORDINARY);
     f = ordinary(); f.elevation_type = 2; CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_P_ELEVATED);
     f = ordinary(); f.is_elevated = 1; CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_P_ELEVATED);
     f = ordinary(); f.elevation_type = 1; CHECK_EQ(tl4_trust_classify(&f), TL4_TRUST_ORDINARY);
@@ -372,6 +385,29 @@ test_classify(void)
 }
 
 static void
+test_machine_default(void)
+{
+    tl4_trust_facts f;
+    SID_T sy = SY, ls = LS, ns = NS;
+
+    f = ordinary(); CHECK_EQ(tl4_trust_uses_machine_default(&f), 0);
+    CHECK_EQ(tl4_trust_uses_machine_default(NULL), 1);
+    f = ordinary(); f.complete = 0; CHECK_EQ(tl4_trust_uses_machine_default(&f), 1);
+    f = ordinary(); f.user.size = 3; CHECK_EQ(tl4_trust_uses_machine_default(&f), 1);
+    f = ordinary(); f.user.sid = sy.b; f.user.size = sy.n; CHECK_EQ(tl4_trust_uses_machine_default(&f), 1);
+    f = ordinary(); f.user.sid = ls.b; f.user.size = ls.n; CHECK_EQ(tl4_trust_uses_machine_default(&f), 1);
+    f = ordinary(); f.user.sid = ns.b; f.user.size = ns.n; CHECK_EQ(tl4_trust_uses_machine_default(&f), 1);
+    f = ordinary(); f.started_by_scm = 1; CHECK_EQ(tl4_trust_uses_machine_default(&f), 1);
+    /* the other privileged clauses do not decide T-PRIV-2 */
+    f = ordinary(); groups[1].attributes = TL4_SE_GROUP_ENABLED; CHECK_EQ(tl4_trust_uses_machine_default(&f), 0);
+    f = ordinary(); f.session_id = 0; CHECK_EQ(tl4_trust_uses_machine_default(&f), 0);
+    f = ordinary(); f.integrity_rid = 0x4000; CHECK_EQ(tl4_trust_uses_machine_default(&f), 0);
+    /* SYSTEM with Administrators enabled: the classifier reports its first clause; this still says machine default */
+    f = ordinary(); f.user.sid = sy.b; f.user.size = sy.n; groups[1].attributes = TL4_SE_GROUP_ENABLED;
+    CHECK_EQ(tl4_trust_uses_machine_default(&f), 1);
+}
+
+static void
 test_sid_length(void)
 {
     SID_T s = USER;
@@ -389,6 +425,7 @@ main(void)
     test_sid_length();
     test_writable();
     test_classify();
+    test_machine_default();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

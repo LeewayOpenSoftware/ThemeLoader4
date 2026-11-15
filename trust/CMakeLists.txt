@@ -8,3 +8,5 @@ tl4_warnings(tl4_trust)
 if(TL4_BUILD_TESTS)
     tl4_add_test(tl4_trust_test SOURCES tests/test_trust.c LIBS tl4_trust)
 endif()
+
+tl4_add_fuzzer(fuzz_trust_sd SOURCES fuzz/fuzz_trust_sd.c LIBS tl4_trust)

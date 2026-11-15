@@ -121,7 +121,7 @@ tl4_trust_sd_writable(const uint8_t *sd, size_t size, enum tl4_trust_object obje
     uint32_t mask = tl4_trust_write_mask(object);
     tl4_trust_reason result = TL4_TRUST_SAFE;
 
-    if (!sd || size < 20 || sd[0] != 1)
+    if (!sd || size < 20 || size > TL4_TRUST_MAX_SD || sd[0] != 1)
         return TL4_TRUST_W_UNREADABLE;
     if (!rd16(sd, size, 2, &control) || !(control & SE_SELF_RELATIVE_) || !rd32(sd, size, 4, &owner_off) ||
         !rd32(sd, size, 16, &dacl_off))
@@ -154,7 +154,7 @@ tl4_trust_sd_writable(const uint8_t *sd, size_t size, enum tl4_trust_object obje
         size_t sid_len;
 
         if (pos > acl_end || acl_end - pos < 4 || !rd16(sd, acl_end, pos + 2, &ace_size) || ace_size < 4 ||
-            ace_size > acl_end - pos)
+            (ace_size & 3u) || ace_size > acl_end - pos)
             return TL4_TRUST_W_UNREADABLE;
         type = sd[pos];
         ace_flags = sd[pos + 1];
@@ -246,8 +246,8 @@ tl4_trust_classify(const tl4_trust_facts *f)
 
         if (!len)
             return TL4_TRUST_P_INCOMPLETE;
-        if (sid_is_nt(f->groups[i].sid, len, SubAdmins, 2) && (f->groups[i].attributes & TL4_SE_GROUP_ENABLED) &&
-            !(f->groups[i].attributes & TL4_SE_GROUP_USE_FOR_DENY_ONLY))
+        /* policy v5: present and not deny-only, enabled or not (a process can enable a disabled group) */
+        if (sid_is_nt(f->groups[i].sid, len, SubAdmins, 2) && !(f->groups[i].attributes & TL4_SE_GROUP_USE_FOR_DENY_ONLY))
             admin = 1;
     }
     for (i = 0; i < f->nprivileges; i++)
@@ -257,7 +257,7 @@ tl4_trust_classify(const tl4_trust_facts *f)
         sid_is_nt(f->user.sid, user_len, SubNetworkService, 1))
         return TL4_TRUST_P_SERVICE_USER;
     if (admin)
-        return TL4_TRUST_P_ADMIN_ENABLED;
+        return TL4_TRUST_P_ADMINISTRATORS;
     if (f->elevation_type == 2 || f->is_elevated)
         return TL4_TRUST_P_ELEVATED;
     if (f->integrity_rid >= SECURITY_MANDATORY_HIGH_RID_)
@@ -272,4 +272,15 @@ tl4_trust_classify(const tl4_trust_facts *f)
         name_is(f->desktop, f->desktop_chars, "Screen-saver") || !name_is(f->winstation, f->winstation_chars, "WinSta0"))
         return TL4_TRUST_P_LOGON;
     return TL4_TRUST_ORDINARY;
+}
+
+int
+tl4_trust_uses_machine_default(const tl4_trust_facts *f)
+{
+    size_t user_len;
+
+    if (!f || !f->complete || !(user_len = tl4_trust_sid_length(f->user.sid, f->user.size)))
+        return 1;
+    return sid_is_nt(f->user.sid, user_len, SubSystem, 1) || sid_is_nt(f->user.sid, user_len, SubLocalService, 1) ||
+           sid_is_nt(f->user.sid, user_len, SubNetworkService, 1) || f->started_by_scm != 0;
 }
