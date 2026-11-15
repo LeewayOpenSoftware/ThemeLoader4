@@ -7,13 +7,14 @@ add_library(tl4_loader_core STATIC
     src/v4.c
     src/model.c
     src/png.c
+    src/range.c
 )
 target_include_directories(tl4_loader_core PUBLIC include)
 tl4_warnings(tl4_loader_core)
 
 # The same sources with TL4_TESTING: adds the between-passes hook the R-GEN-11 tests of the model need (R-MOD-5).
 if(TL4_BUILD_TESTS)
-    add_library(tl4_loader_core_testing STATIC src/pe.c src/strings.c src/v4.c src/model.c src/png.c)
+    add_library(tl4_loader_core_testing STATIC src/pe.c src/strings.c src/v4.c src/model.c src/png.c src/range.c)
     target_include_directories(tl4_loader_core_testing PUBLIC include)
     target_compile_definitions(tl4_loader_core_testing PUBLIC TL4_TESTING)
     tl4_warnings(tl4_loader_core_testing)
@@ -30,6 +31,8 @@ if(TL4_BUILD_TESTS)
     tl4_add_test(tl4_loader_test_v4 SOURCES tests/test_v4.c LIBS tl4_loader_core tl4_loader_fixtures)
     # R-RES-8: the string-table reader, including the largest table a file the reader accepts can hold
     tl4_add_test(tl4_loader_test_strings SOURCES tests/test_strings.c LIBS tl4_loader_core tl4_loader_fixtures)
+    # R-MOD-7: the value ranges of REQUIREMENTS section 6.1, the lists compared with the table as written
+    tl4_add_test(tl4_loader_test_range SOURCES tests/test_range.c LIBS tl4_loader_core)
     tl4_add_test(tl4_loader_test_model SOURCES tests/test_model.c LIBS tl4_loader_core_testing tl4_loader_fixtures)
     tl4_add_test(tl4_loader_test_png SOURCES tests/test_png.c LIBS tl4_loader_core tl4_loader_fixtures)
     # R-V4-14: a style at the limits validates inside the fuzz timeout; the CPU bound applies to plain builds only

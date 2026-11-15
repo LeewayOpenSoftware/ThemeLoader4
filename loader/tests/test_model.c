@@ -390,7 +390,7 @@ static void test_between_passes(void)
 
 static void test_font_syntax(void)
 {
-    tl4_font f;
+    tl4_font f; memset(&f, 0, sizeof(f));   /* MSVC C4701: the loop below always runs once */
     static const char *const good[] = {"Segoe UI, 9, Quality:ClearType", "Segoe UI, 9, Bold, Quality:ClearType",
                                        "Segoe UI, 12, Underline, Quality:ClearType", "Tahoma,8", " Tahoma , 8 , Italic , Strikeout , Quality: Antialiased "};
     static const char *const bad[] = {"", "Tahoma", "Tahoma, 0", "Tahoma, 256", "Tahoma, 9x", ", 9", "Tahoma, 9, Wide",

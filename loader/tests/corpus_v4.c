@@ -13,6 +13,7 @@
 #include <tl4/loader/model.h>
 #include <tl4/loader/png.h>
 #include <tl4/loader/strings.h>
+#include <tl4/loader/range.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -140,6 +141,7 @@ struct totals {
     tl4_v4_stats max;
     tl4_strings_stats max_str;                     /* R-RES-8: blocks per file, string length, languages per block */
     unsigned long str_entries, str_strings;        /* over every table of every file */
+    unsigned long range_checked, range_rejected, range_errors;   /* R-MOD-7: every property through the range function */
     unsigned long max_size;
     unsigned long max_pixels, max_idat, max_chunks, max_side, images_failed;   /* over every image of every style */
 };
@@ -209,6 +211,7 @@ static void check_file(const char *path, const char *name, struct totals *t)
         int bad = 0;
         tl4_model model;
         size_t need = tl4_model_size(&s);
+        memset(&model, 0, sizeof(model));
         void *buf = need ? malloc(need) : 0;
         tl4_status mst = buf ? tl4_model_build(&pe, strings, buf, need, &model) : TL4_E_MODEL_SIZE;
         unsigned long unresolved = s.unresolved_fonts + s.unresolved_filenames + s.unresolved_diskstreams + s.unresolved_strings;
@@ -219,6 +222,47 @@ static void check_file(const char *path, const char *name, struct totals *t)
         memset(&w, 0, sizeof(w));
         if (tl4_pe_enum(&pe, image_cb, &w, &stopped) != TL4_OK) w.failed++;
         if (mst != TL4_OK) { printf("%-36s %s  MODEL BUILD FAILED: %s\n", name, sha, tl4_status_name(mst)); t->failed++; free(buf); free(mdata); free(data); return; }
+        {
+            /* R-MOD-7 / section 6.1: every property of the model through its getter and the range function; a rejected
+             * corpus value is reported (ids only) and goes to the reviewer: the table changes by commit, never the code */
+            uint32_t k, rej = 0, errs = 0, chk = 0;
+            for (k = 0; k < model.nprops; k++)
+            {
+                const tl4_prop *p = &model.props[k];
+                int32_t v[4], list[TL4_RANGE_INTLIST_MAX];
+                uint32_t c = 0, id = 0, off = 0, sz = 0, chars = 0, col = 0;
+                uint16_t str[512];
+                tl4_font fnt;
+                tl4_status gs = TL4_OK, rs;
+                switch (p->type)
+                {
+                    case TL4_V4_INT: case TL4_V4_SIZE: gs = tl4_get_int(&model, p, v); c = 1; break;
+                    case TL4_V4_BOOL: gs = tl4_get_bool(&model, p, v); c = 1; break;
+                    case TL4_V4_ENUM: gs = tl4_get_enum(&model, p, v); c = 1; break;
+                    case TL4_V4_COLOR: gs = tl4_get_color(&model, p, &col); v[0] = (int32_t)col; c = 1; break;
+                    case TL4_V4_POSITION: gs = tl4_get_position(&model, p, v); c = 2; break;
+                    case TL4_V4_RECT: gs = tl4_get_rect(&model, p, v); c = 4; break;
+                    case TL4_V4_MARGINS: gs = tl4_get_margins(&model, p, v); c = 4; break;
+                    case TL4_V4_INTLIST: gs = tl4_get_intlist(&model, p, list, TL4_RANGE_INTLIST_MAX, &c); break;
+                    case TL4_V4_STRING: gs = tl4_get_string(&model, p, str, 512, &chars); break;
+                    case TL4_V4_FONT: gs = tl4_get_font(&model, p, &fnt); break;
+                    case TL4_V4_FILENAME: gs = tl4_get_filename(&model, p, &id, &off, &sz); break;
+                    case TL4_V4_DISKSTREAM: gs = tl4_get_diskstream(&model, p, &id, &off, &sz); break;
+                    default: break;                       /* STREAM, BITMAPREF, HBITMAP, FLOAT...: the range row alone */
+                }
+                if (gs != TL4_OK) { errs++; continue; }
+                chk++;
+                if (p->type == TL4_V4_STRING) rs = tl4_range_check_string(chars);
+                else if (p->type == TL4_V4_FONT) rs = tl4_range_check_font(&fnt);
+                else if (p->type == TL4_V4_INTLIST) rs = tl4_range_check(p->type, p->name_id, list, c);
+                else rs = tl4_range_check(p->type, p->name_id, v, c);
+                if (rs != TL4_OK && rej++ < 8)
+                    printf("%-36s range: REJECTED type %u property %u (class %u part %u state %u, row %u): %s\n", "",
+                           p->type, p->name_id, p->class_ordinal, p->part, p->state, (unsigned)tl4_range_row(p->type, p->name_id), tl4_status_name(rs));
+            }
+            printf("%-36s range: %u properties checked, %u rejected, %u getter errors\n", "", chk, rej, errs);
+            t->range_checked += chk; t->range_rejected += rej; t->range_errors += errs;
+        }
         if (e)
         {
             bad = (strcmp(e->expect, "ok") != 0 || e->size != size || e->cmap != s.cmap_names || e->bcmap != s.bcmap_entries ||
@@ -333,6 +377,8 @@ int main(int argc, char **argv)
            t.images_failed, t.max_pixels, t.max_idat, t.max_chunks, t.max_side);
     printf("string tables: %lu block entries, %lu strings over every table; maxima: blocks per file %u, string %u characters, languages per block %u\n",
            t.str_entries, t.str_strings, t.max_str.blocks, t.max_str.max_chars, t.max_str.max_languages);
+    printf("ranges (section 6.1): %lu properties checked, %lu rejected, %lu getter errors%s\n",
+           t.range_checked, t.range_rejected, t.range_errors, t.range_rejected ? "  <-- a rejected corpus value goes to the reviewer" : "");
     if (t.files == 0) { printf("no .msstyles under %s\n", dir); return 1; }
     return (t.failed || t.mismatched || t.images_failed) ? 1 : 0;
 }
