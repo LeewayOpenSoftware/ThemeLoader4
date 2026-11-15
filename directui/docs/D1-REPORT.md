@@ -55,7 +55,17 @@ Milestone D1 of ThemeLoader4, DirectUI component. Author: Stanley (Leeway Open S
   - Builds are warning-free with `-Wall -Wextra -Wconversion -Wsign-conversion -Wshadow -Werror` under gcc, under clang with ASan+UBSan, and under clang with libFuzzer.
   - All unit tests pass in all three configurations.
   - The unit tests include one negative test per rule (R-PROC-4) and limit tests at and over each 9.5 limit.
-- **Fuzzing:** one harness per module, on generated seeds only (R-PROC-1): `fuzz_xml`, `fuzz_value`, `fuzz_sheet`, `fuzz_layout`. Each checks invariants: spans inside the input, tree links consistent, counts consistent, and the verdict independent of the sink. The cumulative runs per harness are in the delivery message of the last commit. There are no findings.
+- **Fuzzing: no evidence yet.**
+  - The harnesses: one per module (`fuzz_xml`, `fuzz_value`, `fuzz_sheet`, `fuzz_layout`) and `fuzz_two_pass` for R-GEN-11. They use generated seeds only (R-PROC-1).
+  - Each checks the S1-FUZZ-PLAN section 3 promises:
+    - ranges;
+    - counts against the limits and against an enumeration of the result;
+    - agreement (sink independence, layout against tokenizer);
+    - a cleared output on failure;
+    - determinism, compared field by field;
+    - copy independence on an exact-size copy.
+  - **Correction:** every fuzz run reported before main bdf94cc was blind. Only the harness was built with coverage instrumentation, not the parsers (Jim 2, VERIFIED). Those runs, including the run counts in earlier delivery messages, are smoke tests and are **not** fuzz evidence.
+  - Fuzz evidence for D1 is the S1 campaign (phase A, run by the security review), reported in `docs/security/S1-REPORT.md`.
 - **The MSVC build is not run yet.** GitHub Actions is blocked by billing; the CI workflow carries a Windows job.
 
 ### 3.1 Corpus (VERIFIED: 127 UIFILE resources from 21 reference shellstyle files, extracted outside the repository, read through `TL4_CORPUS_DIR`)

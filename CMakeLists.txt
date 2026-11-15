@@ -27,6 +27,11 @@ endif()
 if(TL4_FUZZ AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
     message(FATAL_ERROR "TL4_FUZZ needs Clang (libFuzzer)")
 endif()
+if(TL4_FUZZ)
+    # Coverage instrumentation for every object, not only the harness: without it libFuzzer sees
+    # the edges of the harness file alone and mutates blind inside the parsers.
+    add_compile_options(-fsanitize=fuzzer-no-link)
+endif()
 
 if(TL4_BUILD_TESTS)
     enable_testing()
