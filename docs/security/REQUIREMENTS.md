@@ -38,9 +38,9 @@ This is the single normative list for Theme Loader 4. A milestone is not accepte
 | R-PE-4 | MUST: for every section, `PointerToRawData + SizeOfRawData <= size`. An RVA is translated only through a section whose raw data contains it; an RVA beyond a section's raw data is a reject, not zero fill. |
 | R-PE-5 | MUST: the resource directory (data directory entry 2) lies wholly inside one section's raw data. Every directory header, entry array, name string and data entry is checked to lie inside that range before it is read. |
 | R-PE-6 | MUST: the tree is exactly three levels (type, name, language). A subdirectory bit at level three, or a data entry above level three, is a reject. The walk is iterative. |
-| R-PE-7 | MUST: per directory, named + id entries <= 16,384; total entries visited per file <= 65,536. Name strings are length-prefixed UTF-16, at most 64 characters, compared without locale. |
+| R-PE-7 | MUST: per directory, named + id entries <= 4,096; total entries visited per file <= 65,536; data entries per file <= 16,384. Name strings are length-prefixed UTF-16, at most 64 characters, compared without locale. |
 | R-PE-8 | MUST: the entries of every directory are in strictly ascending order (ids by value, names by UTF-16 code unit, names before ids), as the PE format requires; any other order is a reject. This makes duplicates impossible and lookups unambiguous. A (type, name) pair has exactly one language entry; more than one is a reject. |
-| R-PE-9 | MUST: a data entry's `OffsetToData` is an RVA translated by R-PE-4, and `[offset, offset + Size)` lies inside the file. The reader returns `(offset, size)`, never a pointer computed from unchecked values. |
+| R-PE-9 | MUST: a data entry's `OffsetToData` is an RVA inside the raw data of the section that holds the resource directory (R-PE-5), and `[offset, offset + Size)` lies inside that raw data; data in any other section is a reject. The reader returns `(offset, size)`, never a pointer computed from unchecked values. |
 | R-PE-10 | MUST: nothing else in the file is parsed: no imports, exports, relocations, debug data, certificate table or overlay. |
 | R-PE-11 | MUST: a libFuzzer harness for the reader exists in the same commit as the reader, builds with ASan + UBSan, and runs in CI on a seed set of generated fixtures. |
 
@@ -83,7 +83,8 @@ Corpus maxima are from the sketch (32 reference styles). A value here is normati
 |---|---|---|
 | File size | 2,976,256 bytes | 32 MB |
 | Sections | n/a | 32 |
-| Resource directory entries, per directory / per file | n/a | 16,384 / 65,536 |
+| Resource directory entries, per directory / per file | 1,611 in one directory | 4,096 / 65,536 |
+| Resource data entries per file | about 1,630 | 16,384 |
 | `CMAP` size / names | 18,760 bytes / 374 | 256 KB / 1,024 |
 | `VARIANT` size / records | 449,072 bytes / 11,096 | 2 MB / 32,768 |
 | `RMAP` size | about 0.5 KB | 64 KB |
