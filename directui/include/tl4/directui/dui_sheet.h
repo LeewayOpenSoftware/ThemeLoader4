@@ -10,11 +10,18 @@
  * (R-DUI-2). Text directly inside <style> or <if> (between rules) has no meaning in a sheet; it is
  * ignored and counted, because the reference sheets contain such stray text.
  * A rule is a selector element (any tag, kept as an opaque name) inside zero or more <if>
- * conditions. Its attributes are:
- *   - visual properties from a fixed allow-list: parsed with dui_value_parse, kept (R-DUI-3);
- *   - element states (keyfocused, mousefocused, pressed, selected, mousewithin, ...): conditions;
+ * conditions; a selector element has no children (the stock sheets have none). Its attributes are:
+ *   - visual properties from the fixed allow-list of R-DUI-3: parsed with dui_value_parse, kept;
+ *     the size-bearing ones take non-negative values only (R-DUI-3a);
+ *   - element states (keyfocused, mousefocused, pressed, selected, mousewithin, ...): conditions.
+ *     That a state attribute on a selector acts as a condition is a HYPOTHESIS on DirectUI;
+ *     an integration that cannot verify a state evaluates it as false, like an unknown
+ *     condition (R-DUI-10), so the rule does not apply;
  *   - anything else: dropped and counted, never kept (R-DUI-3).
  * There is no path from this entry point to an element tree.
+ *
+ * The input may change while it is parsed (R-GEN-11): the second pass checks every write
+ * against the sizes allocated from the first pass, and a mismatch is a reject.
  */
 
 #ifndef TL4_DIRECTUI_DUI_SHEET_H
@@ -28,6 +35,9 @@ extern "C" {
 
 #define DUI_SHEET_MAX_SHEETS            512u
 #define DUI_SHEET_MAX_RULES_AND_CONDS   16384u
+#define DUI_SHEET_MAX_SCOPES            4096u
+#define DUI_SHEET_MAX_DECLARATIONS      16384u
+#define DUI_SHEET_MAX_VALUE_NODES       65536u
 
 /* The visual properties a theme may set (R-DUI-3), measured on the stock style sheets. */
 typedef enum dui_property
@@ -77,11 +87,10 @@ typedef struct dui_declaration
 
 #define DUI_SHEET_NONE 0xFFFFFFFFu
 
-/* An <if> block: its conditions, inside an enclosing <if> or selector, if any. */
+/* An <if> block: its conditions, inside an enclosing <if>, if any. */
 typedef struct dui_scope
 {
     uint32_t parent_scope;  /* DUI_SHEET_NONE if none */
-    uint32_t parent_rule;   /* DUI_SHEET_NONE if the <if> is not inside a selector element */
     uint32_t first_condition, condition_count;
 } dui_scope;
 

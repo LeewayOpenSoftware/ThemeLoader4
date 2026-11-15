@@ -6,7 +6,9 @@
  *
  * Two passes over the same tokenizer (R-GEN-7): the first validates and counts without
  * allocating; only then is the model allocated, with sizes bounded by those counts, and the
- * second pass fills it. Both passes run the same code, so they cannot disagree.
+ * second pass fills it. The input may change between and during the passes (R-GEN-11), so the
+ * second pass checks every write against the allocated sizes before it writes; a difference is
+ * a reject.
  */
 
 #include <stdlib.h>
@@ -57,8 +59,25 @@ static const char *const drop_identity[] =
 
 static const char *const drop_behaviour[] =
 {
-    "enabled", "visible", "cursor", "active", "direction",
+    "enabled", "visible", "cursor", "direction",
 };
+
+/* R-DUI-3a: size-bearing properties take non-negative values only. */
+static int
+is_nonnegative_property(int property)
+{
+    switch (property)
+    {
+        case DUI_PROP_HEIGHT: case DUI_PROP_WIDTH: case DUI_PROP_MINSIZE: case DUI_PROP_PADDING:
+        case DUI_PROP_MARGIN: case DUI_PROP_BORDERTHICKNESS: case DUI_PROP_FONTSIZE:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* Test hook (R-GEN-11 test): called between the passes with the caller's buffer. */
+void (*dui_sheets_test_between_passes)(const uint8_t *data, size_t size);
 
 /* Tags that are content, never style-sheet structure (R-DUI-2). */
 static const char *const forbidden_tags[] = { "macro", "bind" };
@@ -99,6 +118,7 @@ typedef struct builder
     int fill;                       /* 0: validate and count; 1: fill the model */
     dui_sheets *out;
     dui_sheet_stats n;              /* running counts (indices in fill mode) */
+    dui_sheet_stats cap;            /* fill mode: the sizes allocated from pass 1 */
     uint8_t level[DUI_XML_MAX_DEPTH + 1];
     uint32_t index[DUI_XML_MAX_DEPTH + 1];  /* scope or rule index per open element */
     int style_has_resid;
@@ -118,7 +138,11 @@ add_condition(builder *b, dui_span name, dui_span value, uint8_t kind)
         return DUI_E_TOO_LARGE;
     if (b->fill)
     {
-        dui_condition *c = &b->out->conditions[b->n.conditions];
+        dui_condition *c;
+
+        if (b->n.conditions >= b->cap.conditions)
+            return DUI_E_SYNTAX; /* the input changed after pass 1 (R-GEN-11) */
+        c = &b->out->conditions[b->n.conditions];
         c->kind = kind;
         c->name = name;
         c->value = value;
@@ -127,6 +151,25 @@ add_condition(builder *b, dui_span name, dui_span value, uint8_t kind)
     if (kind == DUI_COND_OTHER)
         b->n.unknown_conditions++;
     return DUI_OK;
+}
+
+/* resid: a name, as R-DUI-9 (letter or '_' first, then letters, digits, '_', '.', '-'). */
+static int
+resid_ok(const uint8_t *data, dui_span value)
+{
+    uint32_t i;
+
+    if (value.length == 0 || value.length > DUI_XML_MAX_NAME_LEN)
+        return 0;
+    for (i = 0; i < value.length; i++)
+    {
+        uint8_t c = data[value.offset + i];
+        int alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+        int other = (c >= '0' && c <= '9') || c == '.' || c == '-';
+        if (!(alpha || (i > 0 && other)))
+            return 0;
+    }
+    return 1;
 }
 
 static uint8_t
@@ -169,7 +212,11 @@ on_start(builder *b, const dui_xml_event *ev)
             return DUI_E_TOO_LARGE;
         if (b->fill)
         {
-            dui_sheet *s = &b->out->sheets[b->n.sheets];
+            dui_sheet *s;
+
+            if (b->n.sheets >= b->cap.sheets)
+                return DUI_E_SYNTAX;
+            s = &b->out->sheets[b->n.sheets];
             s->first_rule = b->n.rules;
             s->rule_count = 0;
         }
@@ -178,22 +225,25 @@ on_start(builder *b, const dui_xml_event *ev)
         b->style_has_resid = 0;
         return DUI_OK;
     }
-    if (parent != L_STYLE && parent != L_IF && parent != L_SELECTOR)
+    if (parent == L_SELECTOR)
+        return DUI_E_FORBIDDEN; /* a selector has no children in a sheet */
+    if (parent != L_STYLE && parent != L_IF)
         return DUI_E_FORBIDDEN;
     if (IN_LIST(b->data, ev->name, forbidden_tags))
         return DUI_E_FORBIDDEN;
 
     if (dui_name_equals(b->data, ev->name, "if"))
     {
+        if (b->n.scopes >= DUI_SHEET_MAX_SCOPES)
+            return DUI_E_TOO_LARGE;
         if (b->fill)
         {
-            dui_scope *s = &b->out->scopes[b->n.scopes];
-            s->parent_scope = DUI_SHEET_NONE;
-            s->parent_rule = DUI_SHEET_NONE;
-            if (parent == L_IF)
-                s->parent_scope = b->index[d - 1];
-            else if (parent == L_SELECTOR)
-                s->parent_rule = b->index[d - 1];
+            dui_scope *s;
+
+            if (b->n.scopes >= b->cap.scopes)
+                return DUI_E_SYNTAX;
+            s = &b->out->scopes[b->n.scopes];
+            s->parent_scope = (parent == L_IF) ? b->index[d - 1] : DUI_SHEET_NONE;
             s->first_condition = b->n.conditions;
             s->condition_count = 0;
         }
@@ -203,14 +253,16 @@ on_start(builder *b, const dui_xml_event *ev)
     }
 
     /* a selector element */
-    if (parent == L_SELECTOR)
-        return DUI_E_FORBIDDEN; /* nested selectors are layout, not style */
     if (b->n.rules + b->n.conditions >= DUI_SHEET_MAX_RULES_AND_CONDS)
         return DUI_E_TOO_LARGE;
     if (b->fill)
     {
-        dui_rule *r = &b->out->rules[b->n.rules];
+        dui_rule *r;
         uint32_t k;
+
+        if (b->n.rules >= b->cap.rules)
+            return DUI_E_SYNTAX;
+        r = &b->out->rules[b->n.rules];
 
         r->selector = ev->name;
         r->scope = DUI_SHEET_NONE;
@@ -227,6 +279,8 @@ on_start(builder *b, const dui_xml_event *ev)
         for (k = d - 1; k > 0 && b->level[k] != L_STYLE; k--)
             ;
         r->sheet = b->index[k];
+        if (r->sheet >= b->cap.sheets)
+            return DUI_E_SYNTAX;
         b->out->sheets[r->sheet].rule_count++;
         r->first_condition = b->n.conditions;
         r->condition_count = 0;
@@ -254,7 +308,7 @@ on_attribute(builder *b, const dui_xml_event *ev)
         case L_STYLE:
             if (!dui_name_equals(b->data, ev->name, "resid") || b->style_has_resid)
                 return DUI_E_FORBIDDEN;
-            if (ev->value.length == 0 || ev->value.length > DUI_XML_MAX_NAME_LEN)
+            if (!resid_ok(b->data, ev->value))
                 return DUI_E_SYNTAX;
             if (b->fill)
                 b->out->sheets[b->index[ev->depth]].resid = ev->value;
@@ -300,10 +354,32 @@ on_attribute(builder *b, const dui_xml_event *ev)
     st = dui_value_parse(b->data, b->out ? b->out->input_size : 0, ev->value, &b->value);
     if (st != DUI_OK)
         return st;
+    if (is_nonnegative_property(prop - 1))
+    {
+        uint16_t i;
+        for (i = 0; i < b->value.count; i++)
+        {
+            const dui_value_node *vn = &b->value.nodes[i];
+            if ((vn->kind == DUI_V_INT || vn->kind == DUI_V_LENGTH) && vn->number < 0)
+                return DUI_E_FORBIDDEN; /* R-DUI-3a */
+        }
+    }
+    if (b->n.declarations >= DUI_SHEET_MAX_DECLARATIONS ||
+        b->n.value_nodes > DUI_SHEET_MAX_VALUE_NODES - b->value.count)
+    {
+        return DUI_E_TOO_LARGE;
+    }
     if (b->fill)
     {
-        dui_declaration *decl = &b->out->declarations[b->n.declarations];
+        dui_declaration *decl;
         uint16_t i;
+
+        if (b->n.declarations >= b->cap.declarations ||
+            b->value.count > b->cap.value_nodes || b->n.value_nodes > b->cap.value_nodes - b->value.count)
+        {
+            return DUI_E_SYNTAX; /* the input changed after pass 1 (R-GEN-11) */
+        }
+        decl = &b->out->declarations[b->n.declarations];
 
         decl->property = (uint8_t)(prop - 1);
         decl->first_node = b->n.value_nodes;
@@ -400,6 +476,8 @@ dui_sheets_load(const uint8_t *data, size_t size, dui_sheets *out, size_t *error
         free(b);
         return st;
     }
+    if (dui_sheets_test_between_passes)
+        dui_sheets_test_between_passes(data, size);
 
     /* allocate exactly what pass 1 counted */
     out->input = malloc(size);
@@ -427,6 +505,7 @@ dui_sheets_load(const uint8_t *data, size_t size, dui_sheets *out, size_t *error
         b->data = out->input;
         b->fill = 1;
         b->out = out;
+        b->cap = counted;
         st = dui_xml_parse(out->input, size, sheet_sink, b, NULL, error_offset);
         if (st != DUI_OK || memcmp(&counted, &b->n, sizeof(counted)) != 0)
         {
