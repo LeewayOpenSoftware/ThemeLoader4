@@ -1,0 +1,14 @@
+# Never commit Microsoft or third-party theme assets
+*.msstyles
+*.mui
+shellstyle*.dll
+*.theme
+corpus/
+reference/
+tests/corpus/*
+!tests/corpus/README.md
+# build
+build/
+out/
+*.o
+*.obj
