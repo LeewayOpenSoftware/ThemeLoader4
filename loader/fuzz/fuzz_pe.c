@@ -19,6 +19,7 @@
 struct touch_ctx {
     const tl4_pe *pe;
     uint32_t seen;
+    int changed;        /* the buffer was overwritten after the open: ranges still hold, agreement need not */
 };
 
 static void check_name(const tl4_pe *pe, const tl4_res_name *n)
@@ -51,9 +52,12 @@ static int touch_cb(const tl4_resource *r, void *ctx)
         sink = r->data[r->size - 1];
     }
     (void)sink;
-    /* find() agrees with enum(): the same (type, name) resolves to the same bytes */
-    PROMISE(tl4_pe_find(pe, &r->type, &r->name, &again) == TL4_OK);
-    PROMISE(again.offset == r->offset && again.size == r->size && again.language == r->language);
+    /* find() agrees with enum(): the same (type, name) resolves to the same bytes (on an unchanged buffer) */
+    if (!c->changed)
+    {
+        PROMISE(tl4_pe_find(pe, &r->type, &r->name, &again) == TL4_OK);
+        PROMISE(again.offset == r->offset && again.size == r->size && again.language == r->language);
+    }
     c->seen++;
     return 0;
 }
@@ -62,7 +66,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
-    tl4_pe pe;
+    tl4_pe pe, pe2;
     tl4_resource r;
     tl4_res_name types[] = {tl4_res_ascii("IMAGE"), tl4_res_ascii("VARIANT"), tl4_res_ascii("CMAP"),
                             tl4_res_ascii("PACKTHEM_VERSION"), tl4_res_id(6)};
@@ -71,14 +75,25 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     int stopped = 0;
     struct touch_ctx ctx;
     uint32_t cnt;
+    tl4_status st, st2;
+    /* S1 point 6: an exact-size private copy, so an over-read by one byte faults */
+    uint8_t *copy = (uint8_t *)malloc(size ? size : 1);
+    if (!copy) return 0;
+    memcpy(copy, data, size);
 
-    if (tl4_pe_open(data, size, &pe) != TL4_OK)
+    st = tl4_pe_open(copy, size, &pe);
+    /* S1 point 5: the same bytes give the same status and the same handle, field by field */
+    st2 = tl4_pe_open(copy, size, &pe2);
+    PROMISE(st == st2 && memcmp(&pe, &pe2, sizeof(pe)) == 0);
+    if (st != TL4_OK)
     {
-        PROMISE(pe.base == NULL); /* R-GEN-5 */
+        PROMISE(pe.base == NULL);  /* R-GEN-5 */
+        free(copy);
         return 0;
     }
     ctx.pe = &pe;
     ctx.seen = 0;
+    ctx.changed = 0;
     PROMISE(tl4_pe_enum(&pe, touch_cb, &ctx, &stopped) == TL4_OK && stopped == 0);
     PROMISE(ctx.seen == pe.nresources);
     for (i = 0; i < sizeof(types) / sizeof(types[0]); i++)
@@ -87,6 +102,25 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         for (j = 0; j < sizeof(names) / sizeof(names[0]); j++)
             if (tl4_pe_find(&pe, &types[i], &names[j], &r) == TL4_OK) touch_cb(&r, &ctx);
     }
+
+    /* S1 section 4 (R-GEN-11): the input changes after the validating open. The second half of the input, repeated,
+     * overwrites the buffer; every lookup must then reject or hand out ranges that are still inside the buffer. */
+    if (size >= 2)
+    {
+        size_t half = size / 2;
+        for (i = 0; i < size; i++) copy[i] = data[half + (i % (size - half))];
+        ctx.seen = 0;
+        ctx.changed = 1;
+        (void)tl4_pe_enum(&pe, touch_cb, &ctx, &stopped);        /* touch_cb asserts the ranges */
+        for (i = 0; i < sizeof(types) / sizeof(types[0]); i++)
+        {
+            (void)tl4_pe_count_type(&pe, &types[i], &cnt);
+            for (j = 0; j < sizeof(names) / sizeof(names[0]); j++)
+                if (tl4_pe_find(&pe, &types[i], &names[j], &r) == TL4_OK)
+                    PROMISE(r.offset <= pe.size && r.size <= pe.size - r.offset && r.data == pe.base + r.offset);
+        }
+    }
+    free(copy);
     return 0;
 }
 
