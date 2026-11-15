@@ -6,7 +6,8 @@
  *
  * Reads $TL4_CORPUS_DIR/uifile.list like corpus_xml. Entries whose name starts with "theme"
  * are UIFILE id 1 of a style and must load; every other entry is a layout resource, which the
- * theme entry point must refuse (R-DUI-1, R-DUI-2). Skipped (77) without TL4_CORPUS_DIR.
+ * theme entry point must refuse (R-DUI-1, R-DUI-2). Skipped (77) without TL4_CORPUS_DIR, without
+ * uifile.list (a directory holding only .msstyles/.mui), or when the list names no resource.
  */
 
 #include <stdio.h>
@@ -55,10 +56,16 @@ main(void)
         printf("TL4_CORPUS_DIR not set: skipped\n");
         return 77;
     }
-    if (snprintf(path, sizeof(path), "%s/uifile.list", dir) >= (int)sizeof(path) || !(list = fopen(path, "r")))
+    if (snprintf(path, sizeof(path), "%s/uifile.list", dir) >= (int)sizeof(path))
     {
-        fprintf(stderr, "cannot open %s/uifile.list\n", dir);
+        fprintf(stderr, "TL4_CORPUS_DIR path too long\n");
         return 1;
+    }
+    if (!(list = fopen(path, "r")))
+    {
+        /* The directory may hold another component's corpus only (.msstyles, .mui) */
+        printf("no %s/uifile.list (no extracted UIFILE resources): skipped\n", dir);
+        return 77;
     }
     while (fgets(line, sizeof(line), list))
     {
@@ -112,6 +119,11 @@ main(void)
         free(data);
     }
     fclose(list);
+    if (!themes && !layouts)
+    {
+        printf("uifile.list names no resource: skipped\n");
+        return 77;
+    }
 
     printf("theme sheets: %u, rejected %u; layouts: %u, accepted by the theme entry %u\n",
            themes, theme_fail, layouts, layout_accepted);
