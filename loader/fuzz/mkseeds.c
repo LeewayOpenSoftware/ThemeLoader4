@@ -11,6 +11,7 @@
 #include <string.h>
 #include "pebuild.h"
 #include "v4fixture.h"
+#include "v4build.h"
 
 static uint8_t image[64 * 1024];
 static uint8_t prefixed[64 * 1024 + 2];
@@ -79,6 +80,22 @@ int main(int argc, char **argv)
     v4f_default(&parts); parts.variant_size = 0;
     n = v4f_build(&parts, image, sizeof(image)); rc |= !n || write_file(dir, "v4_style", "empty_variant.bin", image, n);
 
+    /* fuzz_v4_model: the same styles (the last 16 bytes drive the queries), plus one with duplicate records and names */
+    {
+        static const char *const dup[] = {"documentation", "sizevariant.NormalSize", "colorvariant.NormalColor", "globals", "Button", "Button"};
+        static const uint8_t other[4] = {0x78, 0x56, 0, 0};
+        v4f_default(&parts);
+        n = v4f_build(&parts, image, sizeof(image)); rc |= !n || write_file(dir, "v4_model", "valid.bin", image, n);
+        v4f_default(&parts); parts.omit_bcmap = 1;
+        n = v4f_build(&parts, image, sizeof(image)); rc |= !n || write_file(dir, "v4_model", "no_bcmap.bin", image, n);
+        v4f_default(&parts); parts.variant_size = 0;
+        n = v4f_build(&parts, image, sizeof(image)); rc |= !n || write_file(dir, "v4_model", "empty_variant.bin", image, n);
+        v4f_default(&parts);
+        parts.cmap_size = v4b_cmap(parts.cmap, sizeof(parts.cmap), dup, 6);
+        parts.variant_size = v4b_record(parts.variant, sizeof(parts.variant), parts.variant_size, 3804, 204, 3, 0, 0, 0, other, 4);
+        n = v4f_build(&parts, image, sizeof(image)); rc |= !n || write_file(dir, "v4_model", "duplicates.bin", image, n);
+    }
+
     /* fuzz_v4_blob: selector byte, CMAP-count byte, then the blob */
     v4f_default(&parts);
     blobbuf[0] = 0; blobbuf[1] = 5; memcpy(blobbuf + 2, parts.cmap, parts.cmap_size);          rc |= write_file(dir, "v4_blob", "cmap.bin", blobbuf, 2 + parts.cmap_size);
@@ -91,6 +108,6 @@ int main(int argc, char **argv)
     prefixed[0] = 4; prefixed[1] = 5; memcpy(prefixed + 2, image, n);                          rc |= !n || write_file(dir, "v4_blob", "strings.bin", prefixed, 2 + n);
 
     if (rc) { fprintf(stderr, "mkseeds: failed\n"); return 1; }
-    printf("mkseeds: 14 seeds written under %s\n", dir);
+    printf("mkseeds: 18 seeds written under %s\n", dir);
     return 0;
 }

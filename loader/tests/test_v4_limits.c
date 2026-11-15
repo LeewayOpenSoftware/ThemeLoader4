@@ -14,7 +14,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <tl4/loader/v4.h>
+#include <tl4/loader/model.h>
 #include "pebuild.h"
 #include "v4build.h"
 
@@ -34,6 +34,7 @@ static int failures = 0, checks = 0;
 
 static uint8_t image[2u * 1024u * 1024u];
 static uint8_t mui_image[512u * 1024u];
+static uint64_t model_buffer[(2u * 1024u * 1024u) / 8u];
 static char class_names[TL4_V4_MAX_CLASSES][NAME_CHARS + 1];
 static const char *name_ptrs[TL4_V4_MAX_CLASSES];
 static uint8_t cmap[TL4_V4_MAX_CMAP_BYTES];
@@ -106,7 +107,7 @@ static size_t make_mui(void)
         for (i = 0; i < 16; i++)
         {
             /* ids 1..2048 are "S<id>"; the font block (ids 2048..2063) holds only id 2048 and the font at 2053 */
-            if (16u * b + i <= NRMAP) snprintf(string_text[b][i], sizeof(string_text[b][i]), "S%u", 16u * b + i);
+            if (16u * b + i >= 1u && 16u * b + i <= NRMAP) snprintf(string_text[b][i], sizeof(string_text[b][i]), "S%u", 16u * b + i);
             else string_text[b][i][0] = 0;
             ptrs[i] = string_text[b][i];
         }
@@ -125,6 +126,8 @@ int main(void)
     pb_options o = {1, 0, 0, 0};
     tl4_pe pe, mui;
     tl4_v4_stats s;
+    tl4_model model;
+    size_t need;
     clock_t t0, t1;
     double seconds;
 #ifdef TL4_SANITIZED
@@ -165,9 +168,12 @@ int main(void)
     t0 = clock();
     CHECK_STATUS(tl4_pe_open(image, bytes, &pe), TL4_OK);
     CHECK_STATUS(tl4_v4_validate(&pe, &mui, &s), TL4_OK);
+    need = tl4_model_size(&s);
+    CHECK(need > 0 && need <= sizeof(model_buffer));
+    CHECK_STATUS(tl4_model_build(&pe, &mui, model_buffer, need, &model), TL4_OK);   /* validates again, then builds */
     t1 = clock();
     seconds = (double)(t1 - t0) / (double)CLOCKS_PER_SEC;
-    printf("open + validate: %.3f s CPU (cap %.0f s)\n", seconds, cap);
+    printf("open + validate + model (%u bytes): %.3f s CPU (cap %.0f s)\n", (unsigned)need, seconds, cap);
     CHECK(seconds < cap);
 
     CHECK(s.cmap_names == TL4_V4_MAX_CLASSES && s.descriptors == 3 && s.bcmap_entries == NCLASSES && s.bcmap_max_depth == TL4_V4_MAX_CHAIN);
@@ -177,6 +183,21 @@ int main(void)
     CHECK(s.fonts == NFONTS && s.unresolved_fonts == 0);
     CHECK(s.strings == NRMAP && s.unresolved_strings == 0);
     CHECK(pe.nresources == NIMAGES + 6u && mui.nresources == NBLOCKS + 1u);
+    CHECK(model.counts.partstates == TL4_V4_MAX_PARTSTATES + 1u && model.counts.props == NRECORDS + NRMAP);   /* RMAP adds (0,0,0) */
+    CHECK(model.counts.duplicate_props == 0 && model.counts.duplicate_names == 0 && model.counts.globals == TL4_NO_BASE);
+    {
+        const tl4_prop *p;
+        tl4_font f;
+        uint32_t id, off, size, ord;
+        CHECK_STATUS(tl4_model_find(&model, 3u + NCLASSES - 1u, 31, 0, 801, &p), TL4_OK);
+        CHECK_STATUS(tl4_get_font(&model, p, &f), TL4_OK); CHECK(f.points == 9 && f.quality == 5);
+        CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 3001, &p), TL4_OK);
+        CHECK_STATUS(tl4_get_filename(&model, p, &id, &off, &size), TL4_OK); CHECK(id == 1 && size == 8);
+        /* the chain: class ordinal 3 + 8 has base 3 + 7 ... down to 3 + 0; ordinal 3 + 9 has none */
+        CHECK(model.classes[3 + 8].base == 3 + 7 && model.classes[3 + 9].base == TL4_NO_BASE);
+        CHECK_STATUS(tl4_model_class_ascii(&model, name_ptrs[1000], &ord), TL4_OK); CHECK(ord == 1000);
+        CHECK(tl4_model_part_defined(&model, 3u + NCLASSES - 1u, 31) && !tl4_model_part_defined(&model, 3, 31));
+    }
     /* without the strings image the fonts cannot resolve: a reject (R-V4-12) */
     CHECK_STATUS(tl4_v4_validate(&pe, 0, &s), TL4_E_V4_REFERENCE);
 

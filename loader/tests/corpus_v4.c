@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <tl4/loader/v4.h>
+#include <tl4/loader/model.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -74,6 +74,7 @@ static void sha256_hex(const uint8_t *data, size_t len, char out[65])
 struct expected {
     char sha[65];
     unsigned long size, version, cmap, bcmap, records, rmap, images, streams, blocks;
+    unsigned long partstates, dup_props, dup_names, model_bytes;   /* the model's columns (L2) */
     char name[128];
     char expect[32];     /* "ok" or the status name the validator must return */
 };
@@ -90,8 +91,9 @@ static int load_expected(const char *path)
     {
         struct expected *e = &table[ntable];
         if (line[0] == '#' || line[0] == 's' || line[0] == '\n' || ntable >= 128) continue;
-        if (sscanf(line, "%64[0-9a-f],%lu,%127[^,],%31[^,],%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu", e->sha, &e->size, e->name, e->expect,
-                   &e->version, &e->cmap, &e->bcmap, &e->records, &e->rmap, &e->images, &e->streams, &e->blocks) == 12)
+        if (sscanf(line, "%64[0-9a-f],%lu,%127[^,],%31[^,],%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu", e->sha, &e->size, e->name, e->expect,
+                   &e->version, &e->cmap, &e->bcmap, &e->records, &e->rmap, &e->images, &e->streams, &e->blocks,
+                   &e->partstates, &e->dup_props, &e->dup_names, &e->model_bytes) == 16)
             ntable++;
     }
     fclose(f);
@@ -176,22 +178,37 @@ static void check_file(const char *path, const char *name, struct totals *t)
     else
     {
         int bad = 0;
+        tl4_model model;
+        size_t need = tl4_model_size(&s);
+        void *buf = need ? malloc(need) : 0;
+        tl4_status mst = buf ? tl4_model_build(&pe, strings, buf, need, &model) : TL4_E_MODEL_SIZE;
+        if (mst != TL4_OK) { printf("%-36s %s  MODEL BUILD FAILED: %s\n", name, sha, tl4_status_name(mst)); t->failed++; free(buf); free(mdata); free(data); return; }
         if (e)
         {
             bad = (strcmp(e->expect, "ok") != 0 || e->size != size || e->cmap != s.cmap_names || e->bcmap != s.bcmap_entries ||
                    e->records != s.variant.records + s.variant.dropped_unknown_type + s.variant.dropped_ref_on_value ||
                    e->rmap != s.rmap.records + s.rmap.dropped_unknown_type + s.rmap.dropped_ref_on_value ||
-                   e->images != s.images || e->streams != s.streams || e->blocks != s.string_blocks);
+                   e->images != s.images || e->streams != s.streams || e->blocks != s.string_blocks ||
+                   e->partstates != model.counts.partstates || e->dup_props != model.counts.duplicate_props ||
+                   e->dup_names != model.counts.duplicate_names || e->model_bytes != (unsigned long)need);
             if (bad) t->mismatched++; else t->ok++;
         }
         else
             t->unknown++;
-        printf("%-36s %s  ok  cmap %u (desc %u) bcmap %u depth %u  records %u (+%u unknown, +%u ref-on-value)  rmap %u  images %u streams %u blocks %u  fonts %u/%u filenames %u/%u diskstreams %u/%u strings %u/%u  partstates %u classes %u%s%s\n",
+        printf("%-36s %s  ok  cmap %u (desc %u) bcmap %u depth %u  records %u (+%u unknown, +%u ref-on-value)  rmap %u  images %u streams %u blocks %u  fonts %u/%u filenames %u/%u diskstreams %u/%u strings %u/%u  partstates %u classes %u  model: partstates %u props %u dup %u dupnames %u bytes %lu globals %u sysmetrics %u%s%s\n",
                name, sha, s.cmap_names, s.descriptors, s.bcmap_entries, s.bcmap_max_depth, s.variant.records,
                s.variant.dropped_unknown_type, s.variant.dropped_ref_on_value, s.rmap.records, s.images, s.streams, s.string_blocks,
                s.fonts - s.unresolved_fonts, s.fonts, s.filenames - s.unresolved_filenames, s.filenames,
                s.diskstreams - s.unresolved_diskstreams, s.diskstreams, s.strings - s.unresolved_strings, s.strings, s.variant.partstates, s.variant.classes,
+               model.counts.partstates, model.counts.props, model.counts.duplicate_props, model.counts.duplicate_names, (unsigned long)need,
+               model.counts.globals, model.counts.sysmetrics,
                e ? "" : "  (not in the expected table)", bad ? "  MISMATCH with the expected table" : "");
+        /* a ready row for the expected table, so a regeneration copies rather than retypes */
+        printf("csvrow: %s,%lu,%s,ok,4,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%lu\n", sha, (unsigned long)size, name, s.cmap_names, s.bcmap_entries,
+               s.variant.records + s.variant.dropped_unknown_type + s.variant.dropped_ref_on_value,
+               s.rmap.records + s.rmap.dropped_unknown_type + s.rmap.dropped_ref_on_value, s.images, s.streams, s.string_blocks,
+               model.counts.partstates, model.counts.duplicate_props, model.counts.duplicate_names, (unsigned long)need);
+        free(buf);
         max_u(&t->max.cmap_names, s.cmap_names); max_u(&t->max.bcmap_max_depth, s.bcmap_max_depth);
         max_u(&t->max.variant.records, s.variant.records + s.variant.dropped_unknown_type + s.variant.dropped_ref_on_value);
         max_u(&t->max.variant.partstates, s.variant.partstates); max_u(&t->max.variant.classes, s.variant.classes);

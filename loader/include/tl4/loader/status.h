@@ -36,7 +36,13 @@ typedef enum tl4_status {
     TL4_E_V4_SIZE,         /* a record's data size does not match its type (R-V4-6) */
     TL4_E_V4_END,          /* a record area does not end exactly on a record boundary (R-V4-4) */
     TL4_E_V4_LIMIT,        /* a count or size over a limit of REQUIREMENTS section 6 */
-    TL4_E_V4_REFERENCE     /* unresolved FONT reference, or more than 1% of records unresolved (R-V4-12) */
+    TL4_E_V4_REFERENCE,    /* unresolved FONT reference, or more than 1% of records unresolved (R-V4-12) */
+
+    /* property model and queries (REQUIREMENTS section 5, milestone L2) */
+    TL4_E_MODEL_SIZE,      /* the caller's buffer is smaller than tl4_model_size(), or the input grew since the sizing pass */
+    TL4_E_TYPE,            /* the property is not of the type the getter serves */
+    TL4_E_BUFFER,          /* the caller's output buffer is too small (never truncated, R-GEN-5) */
+    TL4_E_FONT_SYNTAX      /* a font string outside the known syntax */
 } tl4_status;
 
 const char *tl4_status_name(tl4_status status);
