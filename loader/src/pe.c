@@ -84,7 +84,13 @@ tl4_res_name tl4_res_ascii(const char *ascii)
     uint32_t len = 0;
     n.kind = TL4_NAME_ASCII;
     n.ascii = ascii;
-    if (ascii) while (ascii[len] && len < TL4_PE_MAX_NAME_CHARS) len++;
+    if (ascii) while (ascii[len] && len <= TL4_PE_MAX_NAME_CHARS) len++;
+    if (len == 0 || len > TL4_PE_MAX_NAME_CHARS)
+    {
+        /* empty or longer than any valid resource name: a name that never matches */
+        n.ascii = 0;
+        len = 0;
+    }
     n.length = len;
     return n;
 }
@@ -130,16 +136,19 @@ static int utf16_compare(const tl4_res_name *a, const tl4_res_name *b)
 
 /* ---- headers -------------------------------------------------------------------------------------------------- */
 
-tl4_status tl4_pe_open(const uint8_t *base, size_t size, tl4_pe *pe)
-{
-    uint32_t v, e_lfanew, nsections, opt_size, magic, nrva, fh_off, opt_off, dd_off, sect_off;
-    uint32_t rsrc_rva = 0, rsrc_size = 0;
-    uint32_t i;
-    int found = 0;
+struct walk_counts {
+    uint32_t directories;
+    uint32_t entries;
+    uint32_t resources;
+};
 
-    if (!base || !pe) return TL4_E_ARG;
-    pe->base = base;
-    pe->size = size;
+static tl4_status walk(const tl4_pe *pe, const tl4_res_name *want_type, const tl4_res_name *want_name,
+                       tl4_res_callback callback, void *context, int *stopped, struct walk_counts *counts);
+
+static void clear_handle(tl4_pe *pe)
+{
+    pe->base = 0;
+    pe->size = 0;
     pe->machine = 0;
     pe->nsections = 0;
     pe->is_pe32plus = 0;
@@ -148,6 +157,19 @@ tl4_status tl4_pe_open(const uint8_t *base, size_t size, tl4_pe *pe)
     pe->rsrc_section_va = pe->rsrc_section_raw = pe->rsrc_section_raw_size = 0;
     pe->rsrc_off = pe->rsrc_limit = 0;
     pe->ndirectories = pe->nentries = pe->nresources = 0;
+}
+
+static tl4_status open_checked(const uint8_t *base, size_t size, tl4_pe *pe)
+{
+    uint32_t v, e_lfanew, nsections, opt_size, magic, nrva, fh_off, opt_off, dd_off, sect_off;
+    uint32_t rsrc_rva = 0, rsrc_size = 0;
+    uint32_t i;
+    int found = 0;
+    struct walk_counts counts = {0, 0, 0};
+    tl4_status st;
+
+    pe->base = base;
+    pe->size = size;
 
     if (size > TL4_PE_MAX_FILE_SIZE) return TL4_E_TOO_LARGE;
     if (size < 64) return TL4_E_TRUNCATED;
@@ -223,7 +245,23 @@ tl4_status tl4_pe_open(const uint8_t *base, size_t size, tl4_pe *pe)
     pe->rsrc_dir_size = rsrc_size;
 
     /* the validating walk: counts and bounds of the whole tree, nothing kept but statistics */
-    return tl4_pe_enum(pe, 0, 0, 0);
+    st = walk(pe, 0, 0, 0, 0, 0, &counts);
+    if (st != TL4_OK) return st;
+    pe->ndirectories = counts.directories;
+    pe->nentries = counts.entries;
+    pe->nresources = counts.resources;
+    return TL4_OK;
+}
+
+tl4_status tl4_pe_open(const uint8_t *base, size_t size, tl4_pe *pe)
+{
+    tl4_status st;
+    if (!pe) return TL4_E_ARG;
+    clear_handle(pe);
+    if (!base) return TL4_E_ARG;
+    st = open_checked(base, size, pe);
+    if (st != TL4_OK) clear_handle(pe);   /* R-GEN-5: no partial result */
+    return st;
 }
 
 /* ---- the resource tree ------------------------------------------------------------------------------------- */
@@ -246,13 +284,14 @@ static int rsrc_rd16(const tl4_pe *pe, uint64_t rel, uint32_t *v)
     return rd16(pe->base, pe->size, (uint64_t)pe->rsrc_off + rel, v);
 }
 
-/* Read a directory header; returns the entry count or fails (R-PE-7). */
-static tl4_status read_directory(const tl4_pe *pe, uint32_t rel, uint32_t *count)
+/* Read a directory header; returns the entry count and how many of them the header declares as named (R-PE-7). */
+static tl4_status read_directory(const tl4_pe *pe, uint32_t rel, uint32_t *count, uint32_t *named_count)
 {
     uint32_t named, ids;
     if (!rsrc_range(pe, rel, RSRC_DIR_HEADER_SIZE)) return TL4_E_RSRC_DIRECTORY;
     if (!rsrc_rd16(pe, rel + 12, &named) || !rsrc_rd16(pe, rel + 14, &ids)) return TL4_E_RSRC_DIRECTORY;
     *count = named + ids;
+    *named_count = named;
     if (*count == 0 || *count > TL4_PE_MAX_DIR_ENTRIES) return TL4_E_RSRC_DIRECTORY;
     if (!rsrc_range(pe, rel + RSRC_DIR_HEADER_SIZE, (uint64_t)*count * RSRC_ENTRY_SIZE)) return TL4_E_RSRC_DIRECTORY;
     return TL4_OK;
@@ -285,11 +324,16 @@ static tl4_status read_name(const tl4_pe *pe, uint32_t name_field, tl4_res_name 
 /* Strict ordering within a directory (R-PE-8): names first, by code unit; then ids, ascending; no duplicates. */
 struct order_state {
     int have_prev;
+    uint32_t named;      /* the header's NumberOfNamedEntries: the first `named` entries must be strings */
+    uint32_t index;      /* of the entry being checked */
     tl4_res_name prev;
 };
 
 static tl4_status check_order(struct order_state *o, const tl4_res_name *cur)
 {
+    int should_be_string = o->index < o->named;
+    o->index++;
+    if ((cur->kind == TL4_NAME_ID) == should_be_string) return TL4_E_RSRC_ORDER; /* R-PE-8: the header split */
     if (o->have_prev)
     {
         if (o->prev.kind == TL4_NAME_ID)
@@ -322,12 +366,6 @@ static tl4_status read_data_entry(const tl4_pe *pe, uint32_t rel, tl4_resource *
     return TL4_OK;
 }
 
-struct walk_counts {
-    uint32_t directories;
-    uint32_t entries;
-    uint32_t resources;
-};
-
 static tl4_status count_entries(struct walk_counts *c, uint32_t n)
 {
     if (n > TL4_PE_MAX_ENTRIES - c->entries) return TL4_E_RSRC_DIRECTORY;
@@ -341,19 +379,20 @@ static tl4_status count_entries(struct walk_counts *c, uint32_t n)
 static tl4_status walk(const tl4_pe *pe, const tl4_res_name *want_type, const tl4_res_name *want_name,
                        tl4_res_callback callback, void *context, int *stopped, struct walk_counts *counts)
 {
-    uint32_t ntypes, t;
-    struct order_state type_order = {0, {0}};
+    uint32_t ntypes, t, named;
+    struct order_state type_order = {0, 0, 0, {0}};
     tl4_status st;
 
-    st = read_directory(pe, 0, &ntypes);
+    st = read_directory(pe, 0, &ntypes, &named);
     if (st != TL4_OK) return st;
+    type_order.named = named;
     if ((st = count_entries(counts, ntypes)) != TL4_OK) return st;
 
     for (t = 0; t < ntypes; t++)
     {
         uint32_t te = RSRC_DIR_HEADER_SIZE + t * RSRC_ENTRY_SIZE;
         uint32_t tname, toff, nnames, n;
-        struct order_state name_order = {0, {0}};
+        struct order_state name_order = {0, 0, 0, {0}};
         tl4_resource res;
 
         if (!rsrc_rd32(pe, te, &tname) || !rsrc_rd32(pe, te + 4, &toff)) return TL4_E_RSRC_ENTRY;
@@ -365,7 +404,8 @@ static tl4_status walk(const tl4_pe *pe, const tl4_res_name *want_type, const tl
 
         if (want_type && !tl4_res_name_equal(want_type, &res.type)) continue;
 
-        if ((st = read_directory(pe, toff, &nnames)) != TL4_OK) return st;
+        if ((st = read_directory(pe, toff, &nnames, &named)) != TL4_OK) return st;
+        name_order.named = named;
         if ((st = count_entries(counts, nnames)) != TL4_OK) return st;
 
         for (n = 0; n < nnames; n++)
@@ -382,8 +422,8 @@ static tl4_status walk(const tl4_pe *pe, const tl4_res_name *want_type, const tl
 
             if (want_name && !tl4_res_name_equal(want_name, &res.name)) continue;
 
-            if ((st = read_directory(pe, noff, &nlangs)) != TL4_OK) return st;
-            if (nlangs != 1) return TL4_E_RSRC_LANGUAGES;              /* exactly one language (R-PE-8) */
+            if ((st = read_directory(pe, noff, &nlangs, &named)) != TL4_OK) return st;
+            if (nlangs != 1 || named != 0) return TL4_E_RSRC_LANGUAGES; /* exactly one language, an id (R-PE-8) */
             if ((st = count_entries(counts, nlangs)) != TL4_OK) return st;
 
             if (!rsrc_rd32(pe, noff + RSRC_DIR_HEADER_SIZE, &lname) ||
@@ -393,6 +433,7 @@ static tl4_status walk(const tl4_pe *pe, const tl4_res_name *want_type, const tl
             if (lname > 0xFFFFu) return TL4_E_RSRC_NAME;
             res.language = lname;
             if ((st = read_data_entry(pe, loff, &res)) != TL4_OK) return st;
+            if (counts->resources >= TL4_PE_MAX_RESOURCES) return TL4_E_RSRC_DIRECTORY; /* R-PE-7 */
             counts->resources++;
 
             if (callback)
@@ -413,17 +454,9 @@ tl4_status tl4_pe_enum(const tl4_pe *pe, tl4_res_callback callback, void *contex
 {
     struct walk_counts counts = {0, 0, 0};
     tl4_status st;
-    if (!pe || !pe->base) return TL4_E_ARG;
+    if (!pe || !pe->base || !callback) return TL4_E_ARG;
     if (stopped) *stopped = 0;
     st = walk(pe, 0, 0, callback, context, stopped, &counts);
-    if (st == TL4_OK && callback == 0)
-    {
-        /* the validating walk from tl4_pe_open: record the statistics */
-        tl4_pe *w = (tl4_pe *)pe;
-        w->ndirectories = counts.directories;
-        w->nentries = counts.entries;
-        w->nresources = counts.resources;
-    }
     return st;
 }
 
@@ -444,25 +477,18 @@ tl4_status tl4_pe_find(const tl4_pe *pe, const tl4_res_name *type, const tl4_res
     return stopped ? TL4_OK : TL4_E_NOT_FOUND;
 }
 
-struct count_ctx {
-    const tl4_res_name *type;
-    uint32_t count;
-};
-
 static int count_cb(const tl4_resource *res, void *context)
 {
-    struct count_ctx *c = (struct count_ctx *)context;
-    if (tl4_res_name_equal(c->type, &res->type)) c->count++;
+    /* one callback per name entry: R-PE-8 gives every name exactly one language */
+    (void)res;
+    (*(uint32_t *)context)++;
     return 0;
 }
 
-uint32_t tl4_pe_count_type(const tl4_pe *pe, const tl4_res_name *type)
+tl4_status tl4_pe_count_type(const tl4_pe *pe, const tl4_res_name *type, uint32_t *count)
 {
     struct walk_counts counts = {0, 0, 0};
-    struct count_ctx c;
-    if (!pe || !pe->base || !type) return 0;
-    c.type = type;
-    c.count = 0;
-    if (walk(pe, type, 0, count_cb, &c, 0, &counts) != TL4_OK) return 0;
-    return c.count;
+    if (!pe || !pe->base || !type || !count) return TL4_E_ARG;
+    *count = 0;
+    return walk(pe, type, 0, count_cb, count, 0, &counts);
 }

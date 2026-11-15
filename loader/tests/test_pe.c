@@ -85,7 +85,11 @@ static void test_good_image(int pe32plus)
     t = tl4_res_ascii("IMAGE"); n = tl4_res_id(509);
     CHECK_STATUS(tl4_pe_find(&pe, &t, &n, &r), TL4_OK);
     CHECK(r.size == 12 && r.language == 0 && memcmp(r.data, png_like, 12) == 0);
-    CHECK(tl4_pe_count_type(&pe, &t) == 3);
+    {
+        uint32_t cnt = 99;
+        CHECK_STATUS(tl4_pe_count_type(&pe, &t, &cnt), TL4_OK);
+        CHECK(cnt == 3);
+    }
 
     t = tl4_res_ascii("variant"); n = tl4_res_ascii("normal");
     CHECK_STATUS(tl4_pe_find(&pe, &t, &n, &r), TL4_OK);
@@ -99,7 +103,12 @@ static void test_good_image(int pe32plus)
     CHECK_STATUS(tl4_pe_find(&pe, &t, &n, &r), TL4_E_NOT_FOUND);
     t = tl4_res_ascii("BCMAP"); n = tl4_res_ascii("BCMAP");
     CHECK_STATUS(tl4_pe_find(&pe, &t, &n, &r), TL4_E_NOT_FOUND);
-    CHECK(tl4_pe_count_type(&pe, &t) == 0);
+    {
+        uint32_t cnt = 99;
+        CHECK_STATUS(tl4_pe_count_type(&pe, &t, &cnt), TL4_OK);
+        CHECK(cnt == 0);
+        CHECK_STATUS(tl4_pe_count_type(&pe, &t, NULL), TL4_E_ARG);
+    }
     t = tl4_res_id(6); n = tl4_res_ascii("IMAGE");         /* an id never equals a string */
     CHECK_STATUS(tl4_pe_find(&pe, &t, &n, &r), TL4_E_NOT_FOUND);
 }
@@ -121,6 +130,39 @@ static void test_truncation(void)
     CHECK_STATUS(tl4_pe_open(image, 63, &pe), TL4_E_TRUNCATED);
     CHECK_STATUS(tl4_pe_open(NULL, n, &pe), TL4_E_ARG);
     CHECK_STATUS(tl4_pe_open(image, (size_t)TL4_PE_MAX_FILE_SIZE + 1, &pe), TL4_E_TOO_LARGE);
+    CHECK_STATUS(tl4_pe_open(image, n, NULL), TL4_E_ARG);
+}
+
+/* R-GEN-5: a failed open leaves a cleared handle; nothing can be looked up through it */
+static void test_failed_open_clears(void)
+{
+    pb_options o = {1, 0, 0, 0};
+    pb_layout lay;
+    tl4_pe pe;
+    tl4_resource r;
+    tl4_res_name t = tl4_res_ascii("IMAGE"), nm = tl4_res_id(508);
+    uint32_t cnt = 5;
+    int stopped = 3;
+    size_t n = build_style_like(&o, &lay);
+
+    CHECK(n > 0);
+    CHECK_STATUS(tl4_pe_open(image, n, &pe), TL4_OK);
+    CHECK(pe.base == image && pe.nresources == 7);
+    /* a failure late in the walk (data entry outside the section) must wipe everything the headers had set */
+    memcpy(copy_, image, n);
+    pb_put32(copy_ + lay.first_data_entry + 4, lay.rsrc_raw_size);
+    CHECK_STATUS(tl4_pe_open(copy_, n, &pe), TL4_E_RSRC_DATA);
+    CHECK(pe.base == NULL && pe.size == 0 && pe.rsrc_off == 0 && pe.rsrc_limit == 0 && pe.nsections == 0);
+    CHECK(pe.nresources == 0 && pe.nentries == 0 && pe.ndirectories == 0);
+    CHECK_STATUS(tl4_pe_find(&pe, &t, &nm, &r), TL4_E_ARG);
+    CHECK_STATUS(tl4_pe_enum(&pe, enum_cb, &cnt, &stopped), TL4_E_ARG);
+    CHECK_STATUS(tl4_pe_count_type(&pe, &t, &cnt), TL4_E_ARG);
+    /* an early failure too */
+    memcpy(copy_, image, n);
+    copy_[0] = 'X';
+    pe.base = image;
+    CHECK_STATUS(tl4_pe_open(copy_, n, &pe), TL4_E_DOS_HEADER);
+    CHECK(pe.base == NULL);
 }
 
 static void corrupt32(size_t n, uint32_t off, uint32_t value, tl4_status want)
@@ -196,6 +238,9 @@ static void test_corruptions(void)
     corrupt32(n, root_entry_off, 0x10000, TL4_E_RSRC_NAME);
     /* R-PE-8: a name after an id at the root (turn the first named type into an id while named ones follow) */
     corrupt32(n, root_entry_off, 5, TL4_E_RSRC_ORDER);
+    /* R-PE-8: the header split: 4 names + 1 id is the truth; claim 5 named / 0 ids, then 3 named / 2 ids */
+    corrupt32(n, lay.rsrc_raw + 12, 5u, TL4_E_RSRC_ORDER);
+    corrupt32(n, lay.rsrc_raw + 12, 3u | (2u << 16), TL4_E_RSRC_ORDER);
     /* R-PE-8: two equal ids under IMAGE (509 renamed to 508) and a descending pair (510 renamed to 1) */
     {
         uint32_t image_entry = 0, k;
@@ -276,6 +321,19 @@ static void test_names(void)
     CHECK(!tl4_res_name_equal(&c, &e));
     CHECK(!tl4_res_name_equal(&d, &e));
     CHECK(tl4_res_name_equal(&d, &d));
+    {
+        /* a caller string longer than any valid name, and an empty one, match nothing (not even themselves) */
+        char longname[TL4_PE_MAX_NAME_CHARS + 2];
+        tl4_res_name l, empty = tl4_res_ascii("");
+        memset(longname, 'a', sizeof(longname) - 1);
+        longname[sizeof(longname) - 1] = 0;
+        l = tl4_res_ascii(longname);
+        CHECK(l.length == 0 && l.ascii == NULL);
+        CHECK(!tl4_res_name_equal(&l, &l) && !tl4_res_name_equal(&l, &a) && !tl4_res_name_equal(&empty, &empty));
+        longname[TL4_PE_MAX_NAME_CHARS] = 0;      /* exactly the limit is a valid name */
+        l = tl4_res_ascii(longname);
+        CHECK(l.length == TL4_PE_MAX_NAME_CHARS && tl4_res_name_equal(&l, &l));
+    }
 }
 
 int main(void)
@@ -284,6 +342,7 @@ int main(void)
     test_good_image(1);
     test_good_image(0);
     test_truncation();
+    test_failed_open_clears();
     test_corruptions();
     test_unsorted_builder();
     test_variants();

@@ -11,7 +11,10 @@
  * lookup is answered. It accepts only the shape a style needs: a tree of exactly three levels (type, name,
  * language) with strictly ordered entries and one language per (type, name) (R-PE-6, R-PE-8), whose directories,
  * entries, names and data all lie inside the raw data of the section that holds the resource directory (R-PE-5,
- * R-PE-9). Anything else is rejected, never skipped (R-GEN-5). Nothing else in the file is parsed (R-PE-10).
+ * R-PE-9). Anything else is rejected, never skipped, and a failed tl4_pe_open() leaves the handle cleared so that
+ * no later call can use it (R-GEN-5). Nothing else in the file is parsed (R-PE-10). The input may change under the
+ * reader (R-GEN-11): every value that bounds a read is read once into a local and every lookup re-checks its own
+ * reads, so a byte that changes between the validating walk and a lookup can only turn the lookup into a reject.
  */
 #ifndef TL4_LOADER_PE_H
 #define TL4_LOADER_PE_H
@@ -24,8 +27,9 @@
  * directory, names of 20 characters). */
 #define TL4_PE_MAX_FILE_SIZE     (32u * 1024u * 1024u)
 #define TL4_PE_MAX_SECTIONS      32u
-#define TL4_PE_MAX_DIR_ENTRIES   16384u  /* named + id entries in one directory (R-PE-7) */
+#define TL4_PE_MAX_DIR_ENTRIES   4096u   /* named + id entries in one directory (R-PE-7) */
 #define TL4_PE_MAX_ENTRIES       65536u  /* directory entries visited per file (R-PE-7) */
+#define TL4_PE_MAX_RESOURCES     16384u  /* data entries per file (R-PE-7) */
 #define TL4_PE_MAX_NAME_CHARS    64u     /* UTF-16 code units of a string name (R-PE-7) */
 #define TL4_PE_DEPTH             3u      /* type / name / language (R-PE-6) */
 
@@ -77,6 +81,7 @@ typedef struct tl4_resource {
 } tl4_resource;
 
 tl4_res_name tl4_res_id(uint32_t id);
+/* A caller string longer than TL4_PE_MAX_NAME_CHARS yields a name that matches nothing. */
 tl4_res_name tl4_res_ascii(const char *ascii);
 /* ids equal by value; strings equal by ordinal ASCII case folding; an id never equals a string (R-DUI-9 style) */
 int tl4_res_name_equal(const tl4_res_name *a, const tl4_res_name *b);
@@ -92,7 +97,7 @@ tl4_status tl4_pe_enum(const tl4_pe *pe, tl4_res_callback callback, void *contex
 /* Find the resource (type, name); there is exactly one language entry (R-PE-8). */
 tl4_status tl4_pe_find(const tl4_pe *pe, const tl4_res_name *type, const tl4_res_name *name, tl4_resource *out);
 
-/* Count the name entries under a type (0 when the type is absent). */
-uint32_t tl4_pe_count_type(const tl4_pe *pe, const tl4_res_name *type);
+/* Count the name entries under a type: TL4_OK with *count (0 when the type is absent), or the walk's error. */
+tl4_status tl4_pe_count_type(const tl4_pe *pe, const tl4_res_name *type, uint32_t *count);
 
 #endif
