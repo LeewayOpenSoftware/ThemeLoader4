@@ -7,6 +7,9 @@
 
 #include <stdio.h>
 #include <string.h>
+#ifndef DUI_TESTING
+#error "this test needs the DUI_TESTING build of the core (tl4_directui_core_testing)"
+#endif
 #include <tl4/directui/dui_layout.h>
 #include <tl4/directui/dui_sheet.h>
 #include <tl4/directui/dui_xml.h>

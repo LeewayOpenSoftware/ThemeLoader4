@@ -77,7 +77,10 @@ is_nonnegative_property(int property)
 }
 
 /* Test hook (R-GEN-11 test): called between the passes with the caller's buffer. */
+#ifdef DUI_TESTING
+/* Only in the test build of the core: a shipped core has no writable hook. */
 void (*dui_sheets_test_between_passes)(const uint8_t *data, size_t size);
+#endif
 
 /* Tags that are content, never style-sheet structure (R-DUI-2). */
 static const char *const forbidden_tags[] = { "macro", "bind" };
@@ -476,8 +479,10 @@ dui_sheets_load(const uint8_t *data, size_t size, dui_sheets *out, size_t *error
         free(b);
         return st;
     }
+#ifdef DUI_TESTING
     if (dui_sheets_test_between_passes)
         dui_sheets_test_between_passes(data, size);
+#endif
 
     /* allocate exactly what pass 1 counted */
     out->input = malloc(size);
