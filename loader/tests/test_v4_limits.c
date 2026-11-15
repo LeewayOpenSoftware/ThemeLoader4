@@ -4,7 +4,7 @@
  * PURPOSE:     R-V4-14: a generated style at the limits of REQUIREMENTS section 6 validates inside the fuzz timeout
  * COPYRIGHT:   Copyright 2026 Leeway Open Software
  *
- * The style has 1,024 CMAP names of the maximal length (a 256 KB map), 4,096 IMAGE resources, 32,768 VARIANT
+ * The style has 1,024 CMAP names: three descriptors, `globals`, and 1,020 of the maximal length (a 254 KB map), 4,096 IMAGE resources, 32,768 VARIANT
  * records (32,672 FILENAME references over all the images and 96 FONT references), 8,192 part-states, BCMAP chains
  * of depth 8, and an RMAP at its 64 KB limit: 2,048 STRING references. The fonts and strings resolve through a second
  * strings image (an explicitly opened .mui, R-RES-1) with 128 string blocks. Open and validation together must
@@ -55,7 +55,8 @@ static void make_names(void)
     uint32_t i, k;
     const char *desc[3] = {"documentation", "sizevariant.NormalSize", "colorvariant.NormalColor"};
     for (i = 0; i < 3; i++) name_ptrs[i] = desc[i];
-    for (i = 3; i < TL4_V4_MAX_CLASSES; i++)
+    name_ptrs[3] = "globals";                                   /* class ordinal 3: the chains' last stop */
+    for (i = 4; i < TL4_V4_MAX_CLASSES; i++)
     {
         char *s = class_names[i];
         /* both halves 59 characters: the first encodes the ordinal, so every name is distinct */
@@ -80,7 +81,7 @@ static uint32_t make_variant(void)
     for (c = 0; c < NCLASSES; c++)
         for (part = 0; part < 8; part++)
             for (s = 0; s < 4; s++, k++)
-                off = v4b_record(variant, sizeof(variant), off, 3001u + s, TL4_V4_FILENAME, 3u + c, part, 0, 1u + (k % NIMAGES), 0, 0);
+                off = v4b_record(variant, sizeof(variant), off, (c == 0 ? 3101u : 3001u) + s, TL4_V4_FILENAME, 3u + c, part, 0, 1u + (k % NIMAGES), 0, 0);
     for (part = 8; k < NRECORDS; part++)
         for (s = 0; s < 4; s++, k++)
             off = v4b_record(variant, sizeof(variant), off, 801u + s, TL4_V4_FONT, 3u + NCLASSES - 1u, part, 0, FONT_ID, 0, 92);
@@ -130,6 +131,15 @@ static size_t make_mui(void)
     return pb_build(mui_res, n, &o, mui_image, sizeof(mui_image), 0);
 }
 
+/* The between-passes hook of the R5 test: the terminator of the first maximal name is overwritten, so that name runs
+ * into the next one (241 code units, over the 120 the map allows). The CMAP is restored after the test. */
+static uint32_t first_name_nul;
+static void unterminate_first_name(const uint8_t *data, size_t size)
+{
+    (void)size;
+    ((uint8_t *)(uintptr_t)data)[first_name_nul] = 'X';
+}
+
 int main(void)
 {
     uint32_t n = 0, i, cmap_size, vmap_size, bcmap_size, rmap_size, variant_size;
@@ -177,6 +187,16 @@ int main(void)
            (unsigned)bytes, cmap_size, NRECORDS, NRMAP, NIMAGES, (unsigned)mui_bytes, NBLOCKS + 1u);
 
     CHECK_STATUS(tl4_pe_open(mui_image, mui_bytes, &mui), TL4_OK);
+    {
+        /* ordinal 4 is the first maximal name: 3 descriptors and globals precede it, each padded to 8 bytes */
+        tl4_pe probe; tl4_resource r; tl4_res_name t = tl4_res_ascii("CMAP");
+        uint32_t off = 0, k;
+        CHECK_STATUS(tl4_pe_open(image, bytes, &probe), TL4_OK);
+        CHECK_STATUS(tl4_pe_find(&probe, &t, &t, &r), TL4_OK);
+        for (k = 0; k < 4; k++) off += (2u * ((uint32_t)strlen(name_ptrs[k]) + 1u) + 7u) & ~7u;
+        first_name_nul = r.offset + off + 2u * NAME_CHARS;
+        CHECK(image[first_name_nul] == 0 && image[first_name_nul - 2] == 'z');
+    }
     t0 = clock();
     CHECK_STATUS(tl4_pe_open(image, bytes, &pe), TL4_OK);
     CHECK_STATUS(tl4_v4_validate(&pe, &mui, &s), TL4_OK);
@@ -196,14 +216,14 @@ int main(void)
     CHECK(s.strings == NRMAP && s.unresolved_strings == 0);
     CHECK(pe.nresources == NIMAGES + 6u && mui.nresources == NBLOCKS + 1u);
     CHECK(model.counts.partstates == TL4_V4_MAX_PARTSTATES + 1u && model.counts.props == NRECORDS + NRMAP);   /* RMAP adds (0,0,0) */
-    CHECK(model.counts.duplicate_props == 0 && model.counts.duplicate_names == 0 && model.counts.globals == TL4_NO_BASE);
+    CHECK(model.counts.duplicate_props == 0 && model.counts.duplicate_names == 0 && model.counts.globals == 3);
     {
         const tl4_prop *p;
         tl4_font f;
         uint32_t id, off, size, ord;
         CHECK_STATUS(tl4_model_find(&model, 3u + NCLASSES - 1u, 31, 0, 801, &p), TL4_OK);
         CHECK_STATUS(tl4_get_font(&model, p, &f), TL4_OK); CHECK(f.points == 9 && f.quality == 5);
-        CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 3001, &p), TL4_OK);
+        CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 3101, &p), TL4_OK);                /* globals' own records are 3101.. */
         CHECK_STATUS(tl4_get_filename(&model, p, &id, &off, &size), TL4_OK); CHECK(id == 1 && size == 8);
         /* the chain: class ordinal 3 + 8 has base 3 + 7 ... down to 3 + 0; ordinal 3 + 9 has none */
         CHECK(model.classes[3 + 8].base == 3 + 7 && model.classes[3 + 9].base == TL4_NO_BASE);
@@ -212,14 +232,23 @@ int main(void)
     }
     /* without the strings image the fonts cannot resolve: a reject (R-V4-12) */
     CHECK_STATUS(tl4_v4_validate(&pe, 0, &s), TL4_E_V4_REFERENCE);
-    /* a query that walks a depth-8 chain and ends in globals: ordinal 3 + 8 has bases 3+7 .. 3+0, then no globals
-     * class exists in this style, so the (0, 0) step finds the class-level record of the chain's root only */
+    /* queries through a depth-8 chain that ends in globals: ordinal 3 + 8 has bases 3+7 .. 3+0 = globals (R4b) */
     {
         const tl4_prop *p;
         CHECK_STATUS(tl4_model_find(&model, 3 + 8, 0, 0, 3001, &p), TL4_OK); CHECK(p->class_ordinal == 3 + 8);
         CHECK_STATUS(tl4_model_find(&model, 3 + 8, 200, 7, 3001, &p), TL4_OK); CHECK(p->class_ordinal == 3 + 8);  /* (0,0) step */
-        CHECK_STATUS(tl4_model_find(&model, 3 + 8, 200, 7, 9999, &p), TL4_E_NOT_FOUND);                            /* 9 classes walked */
+        CHECK_STATUS(tl4_model_find(&model, 3 + 8, 5, 2, 3101, &p), TL4_OK); CHECK(p->class_ordinal == 3 && p->origin == TL4_PO_PART); /* found at globals, 9th class */
+        CHECK_STATUS(tl4_model_find(&model, 3 + 8, 200, 7, 9999, &p), TL4_E_NOT_FOUND);                            /* 9 classes walked, three steps, nothing */
+        CHECK_STATUS(tl4_model_find(&model, 3 + 9, 5, 2, 3101, &p), TL4_OK); CHECK(p->class_ordinal == 3);        /* no bases: straight to globals */
+        CHECK(tl4_model_part_defined(&model, 3 + 9, 5) && !tl4_model_part_defined(&model, 3 + 9, 40));
     }
+    /* R5: a class name over 2 x 59 + 2 code units, swapped in between the build's validation and its second read of the
+     * class map, is rejected by that second read; the hook exists only in the TL4_TESTING build of the core */
+    tl4_model_test_between_passes = unterminate_first_name;
+    CHECK_STATUS(tl4_model_build(&pe, &mui, model_buffer, need, &model), TL4_E_V4_CMAP);
+    CHECK(model.classes == 0 && model.nprops == 0);
+    tl4_model_test_between_passes = 0;
+    CHECK_STATUS(tl4_model_build(&pe, &mui, model_buffer, need, &model), TL4_OK);
     /* mismatched buffers (MUST 7): too small fails cleanly, misaligned fails cleanly, larger is accepted */
     CHECK_STATUS(tl4_model_build(&pe, &mui, model_buffer, need - 8, &model), TL4_E_MODEL_SIZE);
     CHECK(model.classes == 0 && model.nprops == 0);

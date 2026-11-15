@@ -190,7 +190,9 @@ msstyles.c:1421-1445) and `MSSTYLES_FindPartState` (msstyles.c:564-575):
 Each step is a binary search of the class's VARIANT part-states by `(part, state)` and of the part-state's props by
 `nameId`: at most (8 + 1) × 3 × (13 + 16) comparisons per query. The **override chain** of a class is its stored base,
 then the base's base, …, at most 8 steps (R-V4-10), and then `globals` once if the chain did not end there; the walk
-counts its steps and stops at that bound whatever the model holds (R-MOD-6). That last step is the engine's rule
+stops at `globals` and does not follow its bases, so a lookup visits at most 10 classes, and it counts its steps and
+stops at that bound whatever the model holds (R-MOD-6). The stored bases are checked at build: every base is an
+ordinal of the map and every chain ends within 8 steps, else the build fails (R1). That last step is the engine's rule
 (msstyles.c:1156-1166 appends `globals` to every chain) and a HYPOTHESIS for Windows; it is what "the adapter keeps
 the current engine's behaviour" means, recorded in R-MOD-6 and as an open point (section 9). `tl4_model_find` searches
 the VARIANT area only; `tl4_model_find_rmap` answers documentation queries from the RMAP area (MUST 2).
@@ -303,10 +305,18 @@ The four proposals of the first draft are now normative in `docs/security/REQUIR
 - Fuzz (S2, harness in the first L2 commit as REQUIREMENTS demands): `fuzz_v4_model`: open, validate, build into an
   exact-size buffer, then queries driven by the input's tail bytes (class by name and ordinal, part, state, name id,
   every getter): promises are determinism (field compare, never memcmp), every returned range inside the mapping, no
-  read outside the sizes the validator checked (ASan), and the model's counts within the stats' bounds. Changing-input
-  form (MUST 7): one run swaps the bytes **between the sizing validation and the build** (the build must fail cleanly
-  or build within its own counts), and every run overwrites the bytes **after the build** and repeats the queries
-  (S1 section 4 applied to the getters).
+  read outside the sizes the validator checked (ASan), and the model's counts within the stats' bounds; every run
+  also overwrites the bytes **after the build** and repeats the queries (S1 section 4 applied to the getters), and
+  builds once more on the changed bytes (a build validates by itself, so that is just another input: it fails
+  cleanly or is bounded by its own statistics).
+- `fuzz_v4_two_pass` (MUST 7, R-GEN-11 **inside** the build): the window that matters is inside `tl4_model_build`,
+  between its own validation and its second read of the maps and records. A hook compiled only into the testing
+  build of the core (`tl4_loader_core_testing`, `TL4_TESTING`, as DirectUI's `fuzz_two_pass`) is called there; the
+  harness splits its input into two images A and B of the same length, builds on A and swaps B in from the hook.
+  The only acceptable outcomes are a clean reject with a cleared model, or a model within the buffer A sized whose
+  ranges lie inside the mapping and which, when B validates on its own, equals B's model field by field. The unit
+  tests use the same hook for a record whose class id becomes invalid and for a class name that loses its
+  terminator (over 120 code units, R5).
 
 ## 9. Open points
 

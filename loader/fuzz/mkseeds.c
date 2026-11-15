@@ -15,6 +15,7 @@
 
 static uint8_t image[64 * 1024];
 static uint8_t prefixed[64 * 1024 + 2];
+static uint8_t pair[2 * 64 * 1024];
 
 static int write_file(const char *dir, const char *sub, const char *name, const uint8_t *data, size_t size)
 {
@@ -96,6 +97,20 @@ int main(int argc, char **argv)
         n = v4f_build(&parts, image, sizeof(image)); rc |= !n || write_file(dir, "v4_model", "duplicates.bin", image, n);
     }
 
+    /* fuzz_v4_two_pass: two styles of the same length, A then B (the build runs on A, the hook swaps B in) */
+    {
+        static const uint8_t other[4] = {0x78, 0x56, 0, 0};
+        size_t na, nb;
+        v4f_default(&parts);
+        na = v4f_build(&parts, image, sizeof(image)); memcpy(pair, image, na); memcpy(pair + na, image, na);
+        rc |= !na || write_file(dir, "v4_two_pass", "valid_valid.bin", pair, 2 * na);
+        /* B: the same style with one value changed in place, so the two images keep their length */
+        v4f_default(&parts); memcpy(parts.variant + 32, other, 4);
+        nb = v4f_build(&parts, image, sizeof(image));
+        rc |= !nb || nb != na;
+        if (nb == na) { memcpy(pair + na, image, nb); rc |= write_file(dir, "v4_two_pass", "valid_dups.bin", pair, 2 * na); }
+    }
+
     /* fuzz_v4_blob: selector byte, CMAP-count byte, then the blob */
     v4f_default(&parts);
     blobbuf[0] = 0; blobbuf[1] = 5; memcpy(blobbuf + 2, parts.cmap, parts.cmap_size);          rc |= write_file(dir, "v4_blob", "cmap.bin", blobbuf, 2 + parts.cmap_size);
@@ -108,6 +123,6 @@ int main(int argc, char **argv)
     prefixed[0] = 4; prefixed[1] = 5; memcpy(prefixed + 2, image, n);                          rc |= !n || write_file(dir, "v4_blob", "strings.bin", prefixed, 2 + n);
 
     if (rc) { fprintf(stderr, "mkseeds: failed\n"); return 1; }
-    printf("mkseeds: 18 seeds written under %s\n", dir);
+    printf("mkseeds: 20 seeds written under %s\n", dir);
     return 0;
 }

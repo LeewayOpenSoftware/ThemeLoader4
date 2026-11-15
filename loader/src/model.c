@@ -7,6 +7,11 @@
 #include <tl4/loader/model.h>
 #include <string.h>
 
+#ifdef TL4_TESTING
+/* Only in the test build of the core: a shipped core has no writable hook. */
+void (*tl4_model_test_between_passes)(const uint8_t *data, size_t size);
+#endif
+
 /* ---- bounded reads (R-GEN-2) ------------------------------------------------------------------------------- */
 
 static int in_range(uint64_t size, uint64_t off, uint64_t len)
@@ -305,6 +310,9 @@ tl4_status tl4_model_build(const tl4_pe *style, const tl4_pe *strings, void *buf
     if ((st = tl4_v4_validate(style, strings, &s)) != TL4_OK) return st;
     need = tl4_model_size(&s);
     if (need == 0 || need > buffer_size) return TL4_E_MODEL_SIZE;
+#ifdef TL4_TESTING
+    if (tl4_model_test_between_passes) tl4_model_test_between_passes(style->base, style->size);
+#endif
 
     clear_model(&m);
     m.style = *style;
@@ -351,6 +359,17 @@ tl4_status tl4_model_build(const tl4_pe *style, const tl4_pe *strings, void *buf
     {
         if (tl4_v4_bcmap_base(&bcmap, i, &m.classes[i].base) != TL4_OK) return TL4_E_V4_BCMAP;
         if (m.classes[i].base != TL4_NO_BASE && m.classes[i].base >= m.nclasses) return TL4_E_V4_BCMAP;
+    }
+    /* the chains are checked on the stored bases, which is all a query ever reads: every chain ends within
+     * TL4_V4_MAX_CHAIN steps (R-V4-10), else the build fails */
+    for (i = 0; i < m.nclasses; i++)
+    {
+        uint32_t at = i, steps = 0;
+        while (m.classes[at].base != TL4_NO_BASE)
+        {
+            at = m.classes[at].base;
+            if (++steps > TL4_V4_MAX_CHAIN) return TL4_E_V4_BCMAP;
+        }
     }
 
     /* name order (equal names by ordinal), the repeats, and the two classes the engine treats specially */
@@ -512,7 +531,8 @@ static const tl4_prop *find_prop(const tl4_model *m, const tl4_partstate *ps, ui
 }
 
 /* One (part, state) along the class, its stored base chain (at most TL4_V4_MAX_CHAIN steps) and `globals` once; the
- * walk counts its steps and stops at the bound whatever the model holds (R-MOD-6). */
+ * walk stops at `globals` (its own bases are not followed), so it visits at most 10 classes, and it counts its
+ * steps and stops at the bound whatever the model holds (R-MOD-6). */
 static const tl4_prop *find_along_chain(const tl4_model *m, uint32_t class_ordinal, uint32_t part, uint32_t state,
                                         uint32_t name_id, int *part_defined_only)
 {
@@ -531,6 +551,7 @@ static const tl4_prop *find_along_chain(const tl4_model *m, uint32_t class_ordin
             }
         }
         if (cur >= m->nclasses) return 0;
+        if (cur == m->counts.globals) return 0;                               /* the chain ends at globals */
         if (m->classes[cur].base != TL4_NO_BASE && steps <= TL4_V4_MAX_CHAIN)
         {
             cur = m->classes[cur].base;
@@ -588,12 +609,24 @@ int tl4_model_part_defined(const tl4_model *m, uint32_t class_ordinal, uint32_t 
 
 /* ---- getters (R-MOD-2, R-MOD-4) -------------------------------------------------------------------------------- */
 
+/* The property must be one of the model's own: a pointer into props[0 .. nprops), aligned on an element. */
+static int prop_in_model(const tl4_model *m, const tl4_prop *p)
+{
+    uintptr_t base, q;
+    if (!m || !m->props || !p) return 0;
+    base = (uintptr_t)(const void *)m->props; q = (uintptr_t)(const void *)p;
+    if (q < base) return 0;
+    if ((q - base) % sizeof(tl4_prop) != 0) return 0;
+    return (q - base) / sizeof(tl4_prop) < m->nprops;
+}
+
 /* Copy the inline bytes of a property into dst: exactly `cb` bytes, which must equal `want` when want != 0 and fit
  * `cap`. Range-checked against the area and the mapping (R-GEN-11), one copy; every further check runs on dst. */
 static tl4_status copy_inline(const tl4_model *m, const tl4_prop *p, uint32_t want, uint8_t *dst, uint32_t cap)
 {
     uint32_t aoff, asize;
     if (!m || !m->style.base || !p || !dst) return TL4_E_ARG;
+    if (!prop_in_model(m, p)) return TL4_E_ARG;
     if (p->area > TL4_AREA_RMAP) return TL4_E_ARG;
     if (p->reference != 0) return TL4_E_TYPE;                               /* a reference record has no inline value */
     if ((want != 0 && p->cb != want) || p->cb > cap) return TL4_E_TRUNCATED; /* not the size the validator accepted */
@@ -610,6 +643,7 @@ static tl4_status get_words(const tl4_model *m, const tl4_prop *p, uint32_t type
     uint32_t i;
     tl4_status st;
     if (!p || !out) return TL4_E_ARG;
+    if (!prop_in_model(m, p)) return TL4_E_ARG;
     if (p->type != type_a && p->type != type_b) return TL4_E_TYPE;
     if ((st = copy_inline(m, p, 4u * n, copy, sizeof(copy))) != TL4_OK) return st;
     for (i = 0; i < n; i++) out[i] = (int32_t)word(copy, 4u * i);
@@ -648,6 +682,7 @@ tl4_status tl4_get_intlist(const tl4_model *m, const tl4_prop *p, int32_t *value
     if (!count) return TL4_E_ARG;
     *count = 0;
     if (!p || (!values && cap)) return TL4_E_ARG;
+    if (!prop_in_model(m, p)) return TL4_E_ARG;
     if (p->type != TL4_V4_INTLIST) return TL4_E_TYPE;
     /* the count comes from the model's size, never from the input (R-MOD-4) */
     if (p->cb < 4 || (p->cb & 3u) || p->cb > sizeof(copy)) return TL4_E_TRUNCATED;
@@ -664,6 +699,7 @@ static tl4_status copy_reference(const tl4_model *m, const tl4_prop *p, uint8_t 
 {
     const tl4_pe *pe;
     *size = 0;
+    if (!prop_in_model(m, p)) return TL4_E_ARG;
     if (p->ref_where == TL4_REF_STYLE) pe = &m->style;
     else if (p->ref_where == TL4_REF_STRINGS && m->has_strings) pe = &m->strings;
     else return TL4_E_V4_REFERENCE;
@@ -683,6 +719,7 @@ tl4_status tl4_get_string(const tl4_model *m, const tl4_prop *p, uint16_t *out, 
     if (!chars) return TL4_E_ARG;
     *chars = 0;
     if (!m || !p || !out || cap_chars == 0) return TL4_E_ARG;
+    if (!prop_in_model(m, p)) return TL4_E_ARG;
     if (p->type != TL4_V4_STRING) return TL4_E_TYPE;
     dst = (uint8_t *)out;
     if (p->reference != 0)
@@ -803,6 +840,7 @@ tl4_status tl4_get_font(const tl4_model *m, const tl4_prop *p, tl4_font *font)
     if (!font) return TL4_E_ARG;
     memset(font, 0, sizeof(*font));
     if (!m || !p) return TL4_E_ARG;
+    if (!prop_in_model(m, p)) return TL4_E_ARG;
     if (p->type != TL4_V4_FONT) return TL4_E_TYPE;
     if (p->reference == 0) return TL4_E_TYPE;                              /* FONT always carries a reference (R-V4-7) */
     if (p->ref_size > sizeof(copy) || (p->ref_size & 1u)) return TL4_E_TRUNCATED;
@@ -816,6 +854,7 @@ static tl4_status get_resource_ref(const tl4_model *m, const tl4_prop *p, uint32
     if (!id || !offset || !size) return TL4_E_ARG;
     *id = 0; *offset = 0; *size = 0;
     if (!m || !m->style.base || !p) return TL4_E_ARG;
+    if (!prop_in_model(m, p)) return TL4_E_ARG;
     if (p->type != type_id) return TL4_E_TYPE;
     if (p->reference == 0) return TL4_E_TYPE;
     if (p->ref_where != TL4_REF_STYLE) return TL4_E_V4_REFERENCE;         /* resolved at build, or not at all */
@@ -839,6 +878,7 @@ tl4_status tl4_get_metric(const tl4_model *m, const tl4_prop *p, int32_t *value)
     uint8_t copy[4u + 4u * TL4_V4_MAX_INTLIST];
     tl4_status st;
     if (!p || !value) return TL4_E_ARG;
+    if (!prop_in_model(m, p)) return TL4_E_ARG;
     switch (p->type)
     {
         /* the engine's list (property.c GetThemeMetric), every one at least 4 bytes; never STRING, FILENAME, FONT */

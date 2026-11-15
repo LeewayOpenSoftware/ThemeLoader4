@@ -276,6 +276,57 @@ static void test_changed_input(void)
     CHECK(1);
 }
 
+/* R-GEN-11 inside the build (R-MOD-5): the bytes change between the build's validation and its second read */
+static int hook_calls;
+static void hook_untouched(const uint8_t *data, size_t size) { (void)data; (void)size; hook_calls++; }
+static void hook_bad_class(const uint8_t *data, size_t size)
+{
+    /* the first VARIANT record's class id becomes 1000: the second walk must reject it */
+    tl4_pe p; tl4_resource r; tl4_res_name t = tl4_res_ascii("VARIANT"), n = tl4_res_ascii("NORMAL");
+    hook_calls++;
+    if (tl4_pe_open(data, size, &p) == TL4_OK && tl4_pe_find(&p, &t, &n, &r) == TL4_OK) put32((uint8_t *)(uintptr_t)r.data + 8, 1000);
+}
+static void hook_long_name(const uint8_t *data, size_t size)
+{
+    /* the CMAP's last terminator vanishes: the second class-map check must reject the map (R5) */
+    tl4_pe p; tl4_resource r; tl4_res_name t = tl4_res_ascii("CMAP");
+    hook_calls++;
+    if (tl4_pe_open(data, size, &p) == TL4_OK && tl4_pe_find(&p, &t, &t, &r) == TL4_OK)
+    {
+        uint32_t i;
+        for (i = 0; i < r.size; i++) ((uint8_t *)(uintptr_t)r.data)[i] = (uint8_t)(i & 1 ? 0 : 'A');   /* one unterminated name */
+    }
+}
+static void test_between_passes(void)
+{
+    v4f_default(&parts);
+    hook_calls = 0;
+    tl4_model_test_between_passes = hook_untouched;
+    CHECK_STATUS(build(), TL4_OK); CHECK(hook_calls == 1 && model.counts.props == 15);
+    tl4_model_test_between_passes = hook_bad_class;
+    CHECK_STATUS(build(), TL4_E_V4_RECORD); CHECK(hook_calls == 2 && model.classes == 0 && model.nprops == 0);
+    v4f_default(&parts);
+    tl4_model_test_between_passes = hook_long_name;
+    CHECK_STATUS(build(), TL4_E_V4_CMAP); CHECK(hook_calls == 3 && model.classes == 0);
+    tl4_model_test_between_passes = 0;
+    v4f_default(&parts);
+    CHECK_STATUS(build(), TL4_OK); CHECK(hook_calls == 3);
+    /* a property that is not the model's own is refused by every getter */
+    {
+        tl4_prop foreign; int32_t v; uint32_t c, id, off, size, n; uint16_t str[8]; tl4_font f;
+        foreign = model.props[0];
+        CHECK_STATUS(tl4_get_int(&model, &foreign, &v), TL4_E_ARG);
+        CHECK_STATUS(tl4_get_color(&model, &foreign, &c), TL4_E_ARG);
+        CHECK_STATUS(tl4_get_intlist(&model, &foreign, &v, 1, &n), TL4_E_ARG);
+        CHECK_STATUS(tl4_get_string(&model, &foreign, str, 8, &n), TL4_E_ARG);
+        CHECK_STATUS(tl4_get_font(&model, &foreign, &f), TL4_E_ARG);
+        CHECK_STATUS(tl4_get_filename(&model, &foreign, &id, &off, &size), TL4_E_ARG);
+        CHECK_STATUS(tl4_get_metric(&model, &foreign, &v), TL4_E_ARG);
+        CHECK_STATUS(tl4_get_int(&model, model.props + model.nprops, &v), TL4_E_ARG);
+        CHECK_STATUS(tl4_get_int(&model, (const tl4_prop *)(const void *)((const uint8_t *)model.props + 1), &v), TL4_E_ARG);
+    }
+}
+
 static void test_font_syntax(void)
 {
     tl4_font f;
@@ -310,6 +361,7 @@ int main(void)
     test_duplicates();
     test_sizes_and_failures();
     test_changed_input();
+    test_between_passes();
     test_font_syntax();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
