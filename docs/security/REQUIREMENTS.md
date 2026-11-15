@@ -9,7 +9,7 @@ This is the single normative list for Theme Loader 4. A milestone is not accepte
 ## 1. Threat model
 
 - A style file (`.msstyles`, its `.mui`, later `shellstyle.dll`) is **untrusted input**. Its author is assumed hostile. A signature, if present, is ignored by the parser.
-- The loader runs in every GUI process of the user, including processes of that user with higher privilege (owner decision 2026-11-15: elevated processes use the user's style, as Windows does). So a defect here is a defect in all of them.
+- The loader runs in every GUI process of the user, including processes of that user with higher privilege. Owner decisions of 2026-11-15: elevated processes follow the user's choice of style, as Windows does, but a privileged process loads theme resources only from a protected location that unprivileged users cannot write (R-POL-7). So a defect here is a defect in all of them, and the policy limits who can reach it.
 - Goals, in order: no memory-unsafe behaviour on any input; no unbounded time or memory on any input; a rejected style changes nothing.
 - Not goals: confidentiality of the style, protection against the administrator, protection of the image decoders themselves (they are fenced by R-RES, not fixed here).
 
@@ -116,6 +116,7 @@ Corpus maxima are from the sketch (32 reference styles). A value here is normati
 | R-POL-4 | MUST: fail closed. Any error leaves the process on the unthemed look, with no partial theme. |
 | R-POL-5 | MUST: crash guard. A mark is set before a style is loaded and cleared after; a process that finds the mark at start-up skips the style. |
 | R-POL-6 | MUST: paths inside a `.theme` file are untrusted and resolve only inside the store. Companion binaries shipped with theme packages are code and are never installed by a theme installer. |
+| R-POL-7 | MUST: R-POL-1 to R-POL-6 are enforced as written in `docs/security/THEME-TRUST-POLICY.md` (rules T-DEF, T-STORE, T-LOAD, T-PRIV, T-INST, T-SIG, T-FAIL, T-GUARD, T-GATE). That file defines what a user-writable location and a privileged process are, the protected store and its ACL, the installer's validation, the origin mark, and the gate before the version-4 path is enabled. The rules bind every loader in service, the version-3 one included. The integration design (I1) cites those ids; enforcement is reviewed by the security reviewer before it is enabled. |
 
 ## 8. Process
 
