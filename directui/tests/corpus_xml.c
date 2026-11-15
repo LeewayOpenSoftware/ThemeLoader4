@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <tl4/directui/dui_layout.h>
 #include <tl4/directui/dui_xml.h>
 
 #define MAX_PATH_LEN 1024
@@ -88,6 +89,13 @@ main(void)
         }
         total++;
         status = dui_xml_parse(data, size, NULL, NULL, &st, &off);
+        if (status == DUI_OK)
+        {
+            /* every resource also builds as a consumer layout (R-DUI-4 entry point) */
+            dui_layout layout;
+            status = dui_layout_load(data, size, &layout, &off);
+            dui_layout_free(&layout);
+        }
         if (status != DUI_OK)
         {
             rejected++;
