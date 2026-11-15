@@ -42,6 +42,16 @@ const char *tl4_status_name(tl4_status status)
         case TL4_E_RSRC_LANGUAGES: return "resource-languages";
         case TL4_E_RSRC_DATA: return "resource-data";
         case TL4_E_NOT_FOUND: return "not-found";
+        case TL4_E_V4_VERSION: return "v4-version";
+        case TL4_E_V4_MISSING: return "v4-missing-resource";
+        case TL4_E_V4_CMAP: return "v4-cmap";
+        case TL4_E_V4_VMAP: return "v4-vmap";
+        case TL4_E_V4_BCMAP: return "v4-bcmap";
+        case TL4_E_V4_RECORD: return "v4-record";
+        case TL4_E_V4_SIZE: return "v4-size";
+        case TL4_E_V4_END: return "v4-end";
+        case TL4_E_V4_LIMIT: return "v4-limit";
+        case TL4_E_V4_REFERENCE: return "v4-reference";
     }
     return "unknown";
 }

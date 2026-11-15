@@ -24,7 +24,19 @@ typedef enum tl4_status {
     TL4_E_RSRC_ORDER,      /* entries are not strictly ascending with names before ids (R-PE-8) */
     TL4_E_RSRC_LANGUAGES,  /* a (type, name) pair has more than one language entry (R-PE-8) */
     TL4_E_RSRC_DATA,       /* a data entry is outside the section's raw data */
-    TL4_E_NOT_FOUND        /* lookup: no such resource */
+    TL4_E_NOT_FOUND,       /* lookup: no such resource */
+
+    /* version-4 container validator (REQUIREMENTS section 4) */
+    TL4_E_V4_VERSION,      /* PACKTHEM_VERSION missing, not 2 bytes or not 4 (R-V4-1) */
+    TL4_E_V4_MISSING,      /* a required resource (CMAP, VMAP, BCMAP, RMAP, VARIANT NORMAL) is absent */
+    TL4_E_V4_CMAP,         /* class map malformed: odd size, unterminated, empty half, two '::', too long, duplicate (R-V4-2) */
+    TL4_E_V4_VMAP,         /* variant map malformed (R-V4-3) */
+    TL4_E_V4_BCMAP,        /* base-class map malformed, bad entry, cycle or chain too deep (R-V4-10) */
+    TL4_E_V4_RECORD,       /* a record header field out of range (R-V4-5) */
+    TL4_E_V4_SIZE,         /* a record's data size does not match its type (R-V4-6) */
+    TL4_E_V4_END,          /* a record area does not end exactly on a record boundary (R-V4-4) */
+    TL4_E_V4_LIMIT,        /* a count or size over a limit of REQUIREMENTS section 6 */
+    TL4_E_V4_REFERENCE     /* unresolved FONT reference, or more than 1% of records unresolved (R-V4-12) */
 } tl4_status;
 
 const char *tl4_status_name(tl4_status status);

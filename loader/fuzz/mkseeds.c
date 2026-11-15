@@ -1,21 +1,25 @@
 /*
  * PROJECT:     Theme Loader 4 - loader fuzz harnesses
  * LICENSE:     LGPL-2.1-or-later (https://spdx.org/licenses/LGPL-2.1-or-later)
- * PURPOSE:     Writes generated seed inputs for the fuzzers (R-PROC-1); the seeds come from tests/pebuild.c
+ * PURPOSE:     Writes generated seed inputs for the fuzzers (R-PROC-1): PE images for fuzz_pe and fuzz_v4_style,
+ *              raw blobs for fuzz_v4_blob. Nothing here is copied from a real style.
  * COPYRIGHT:   Copyright 2026 Leeway Open Software
+ *
+ * usage: mkseeds <seed root>   writes the seeds into <root>/pe, <root>/v4_style and <root>/v4_blob
  */
 #include <stdio.h>
 #include <string.h>
 #include "pebuild.h"
+#include "v4fixture.h"
 
 static uint8_t image[64 * 1024];
 
-static int write_file(const char *dir, const char *name, const uint8_t *data, size_t size)
+static int write_file(const char *dir, const char *sub, const char *name, const uint8_t *data, size_t size)
 {
     char path[1024];
     FILE *f;
-    if (strlen(dir) + strlen(name) + 2 > sizeof(path)) return 1;
-    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    if (strlen(dir) + strlen(sub) + strlen(name) + 3 > sizeof(path)) return 1;
+    snprintf(path, sizeof(path), "%s/%s/%s", dir, sub, name);
     f = fopen(path, "wb");
     if (!f) { fprintf(stderr, "cannot write %s\n", path); return 1; }
     if (fwrite(data, 1, size, f) != size) { fclose(f); return 1; }
@@ -50,19 +54,39 @@ int main(int argc, char **argv)
     };
     pb_res one[] = {{NULL, 10, NULL, 1, 0, blob, 1}};
     pb_options o32plus = {1, 0, 0, 0}, o32 = {0, 0, 0, 0}, osecs = {1, 0x3000, 2, 0};
+    v4f_parts parts;
+    uint8_t blobbuf[4096];
     size_t n;
     const char *dir;
     int rc = 0;
 
-    if (argc != 2) { fprintf(stderr, "usage: mkseeds <directory>\n"); return 2; }
+    if (argc != 2) { fprintf(stderr, "usage: mkseeds <seed root>\n"); return 2; }
     dir = argv[1];
 
-    n = pb_build(style, sizeof(style) / sizeof(style[0]), &o32plus, image, sizeof(image), NULL); rc |= !n || write_file(dir, "style_pe32plus.bin", image, n);
-    n = pb_build(style, sizeof(style) / sizeof(style[0]), &o32, image, sizeof(image), NULL);     rc |= !n || write_file(dir, "style_pe32.bin", image, n);
-    n = pb_build(style, sizeof(style) / sizeof(style[0]), &osecs, image, sizeof(image), NULL);   rc |= !n || write_file(dir, "style_sections.bin", image, n);
-    n = pb_build(v3, sizeof(v3) / sizeof(v3[0]), &o32, image, sizeof(image), NULL);              rc |= !n || write_file(dir, "v3_like.bin", image, n);
-    n = pb_build(one, 1, &o32plus, image, sizeof(image), NULL);                                  rc |= !n || write_file(dir, "one_resource.bin", image, n);
+    /* fuzz_pe: resource trees of several shapes */
+    n = pb_build(style, sizeof(style) / sizeof(style[0]), &o32plus, image, sizeof(image), NULL); rc |= !n || write_file(dir, "pe", "style_pe32plus.bin", image, n);
+    n = pb_build(style, sizeof(style) / sizeof(style[0]), &o32, image, sizeof(image), NULL);     rc |= !n || write_file(dir, "pe", "style_pe32.bin", image, n);
+    n = pb_build(style, sizeof(style) / sizeof(style[0]), &osecs, image, sizeof(image), NULL);   rc |= !n || write_file(dir, "pe", "style_sections.bin", image, n);
+    n = pb_build(v3, sizeof(v3) / sizeof(v3[0]), &o32, image, sizeof(image), NULL);              rc |= !n || write_file(dir, "pe", "v3_like.bin", image, n);
+    n = pb_build(one, 1, &o32plus, image, sizeof(image), NULL);                                  rc |= !n || write_file(dir, "pe", "one_resource.bin", image, n);
+
+    /* fuzz_v4_style: a complete valid style, and two near misses the validator rejects */
+    v4f_default(&parts);
+    n = v4f_build(&parts, image, sizeof(image)); rc |= !n || write_file(dir, "v4_style", "valid.bin", image, n);
+    v4f_default(&parts); parts.omit_bcmap = 1;
+    n = v4f_build(&parts, image, sizeof(image)); rc |= !n || write_file(dir, "v4_style", "no_bcmap.bin", image, n);
+    v4f_default(&parts); parts.variant_size = 0;
+    n = v4f_build(&parts, image, sizeof(image)); rc |= !n || write_file(dir, "v4_style", "empty_variant.bin", image, n);
+
+    /* fuzz_v4_blob: selector byte, CMAP-count byte, then the blob */
+    v4f_default(&parts);
+    blobbuf[0] = 0; blobbuf[1] = 5; memcpy(blobbuf + 2, parts.cmap, parts.cmap_size);          rc |= write_file(dir, "v4_blob", "cmap.bin", blobbuf, 2 + parts.cmap_size);
+    blobbuf[0] = 1; blobbuf[1] = 0; memcpy(blobbuf + 2, parts.vmap, parts.vmap_size);          rc |= write_file(dir, "v4_blob", "vmap.bin", blobbuf, 2 + parts.vmap_size);
+    blobbuf[0] = 2; blobbuf[1] = 5; memcpy(blobbuf + 2, parts.bcmap, parts.bcmap_size);        rc |= write_file(dir, "v4_blob", "bcmap.bin", blobbuf, 2 + parts.bcmap_size);
+    blobbuf[0] = 3; blobbuf[1] = 5; memcpy(blobbuf + 2, parts.variant, parts.variant_size);    rc |= write_file(dir, "v4_blob", "variant.bin", blobbuf, 2 + parts.variant_size);
+    blobbuf[0] = 3; blobbuf[1] = 5; memcpy(blobbuf + 2, parts.rmap, parts.rmap_size);          rc |= write_file(dir, "v4_blob", "rmap.bin", blobbuf, 2 + parts.rmap_size);
+
     if (rc) { fprintf(stderr, "mkseeds: failed\n"); return 1; }
-    printf("mkseeds: 5 seeds written to %s\n", dir);
+    printf("mkseeds: 13 seeds written under %s\n", dir);
     return 0;
 }
