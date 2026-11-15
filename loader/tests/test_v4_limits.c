@@ -32,7 +32,7 @@ static int failures = 0, checks = 0;
 #define NAME_CHARS    (2u * TL4_V4_MAX_NAME_HALF + 2u)  /* "A..59..::B..59.." */
 #define FONT_ID       (16u * NBLOCKS + 5u)              /* a font string in block NBLOCKS + 1 */
 
-static uint8_t image[2u * 1024u * 1024u];
+static uint8_t image[3u * 1024u * 1024u];
 static uint8_t mui_image[512u * 1024u];
 static uint64_t model_buffer[(2u * 1024u * 1024u) / 8u];
 static char class_names[TL4_V4_MAX_CLASSES][NAME_CHARS + 1];
@@ -40,7 +40,7 @@ static const char *name_ptrs[TL4_V4_MAX_CLASSES];
 static uint8_t cmap[TL4_V4_MAX_CMAP_BYTES];
 static uint8_t vmap[128], bcmap[4u + 4u * NCLASSES];
 static uint8_t rmap[TL4_V4_MAX_RMAP_BYTES];
-static uint8_t variant[NRECORDS * 32u];
+static uint8_t variant[NRECORDS * 40u];   /* 32-byte headers, or 40 bytes with a 4-byte inline value */
 static uint32_t bases[NCLASSES];
 static pb_res res[NIMAGES + 8u];
 static pb_res mui_res[NBLOCKS + 1u];
@@ -87,6 +87,17 @@ static uint32_t make_variant(void)
     return off;
 }
 
+/* A second VARIANT: 32,768 records with one identical key (class 3, part 0, state 0, name 3804): the model keeps one
+ * and counts 32,767 duplicates, inside the same bound (MUST 7 of the L2 review). */
+static uint32_t make_variant_duplicates(void)
+{
+    static const uint8_t color[4] = {0x34, 0x12, 0, 0};
+    uint32_t off = 0, k;
+    for (k = 0; k < NRECORDS; k++)
+        off = v4b_record(variant, sizeof(variant), off, 3804, TL4_V4_COLOR, 3, 0, 0, 0, color, 4);
+    return off;
+}
+
 /* RMAP at its limit: 2,048 STRING records at class 0, distinct name ids, referencing string ids 1..2048 in the mui */
 static uint32_t make_rmap(void)
 {
@@ -122,6 +133,7 @@ static size_t make_mui(void)
 int main(void)
 {
     uint32_t n = 0, i, cmap_size, vmap_size, bcmap_size, rmap_size, variant_size;
+    /* res[5] is the VARIANT entry: the duplicate style below swaps its bytes */
     size_t bytes, mui_bytes;
     pb_options o = {1, 0, 0, 0};
     tl4_pe pe, mui;
@@ -200,6 +212,46 @@ int main(void)
     }
     /* without the strings image the fonts cannot resolve: a reject (R-V4-12) */
     CHECK_STATUS(tl4_v4_validate(&pe, 0, &s), TL4_E_V4_REFERENCE);
+    /* a query that walks a depth-8 chain and ends in globals: ordinal 3 + 8 has bases 3+7 .. 3+0, then no globals
+     * class exists in this style, so the (0, 0) step finds the class-level record of the chain's root only */
+    {
+        const tl4_prop *p;
+        CHECK_STATUS(tl4_model_find(&model, 3 + 8, 0, 0, 3001, &p), TL4_OK); CHECK(p->class_ordinal == 3 + 8);
+        CHECK_STATUS(tl4_model_find(&model, 3 + 8, 200, 7, 3001, &p), TL4_OK); CHECK(p->class_ordinal == 3 + 8);  /* (0,0) step */
+        CHECK_STATUS(tl4_model_find(&model, 3 + 8, 200, 7, 9999, &p), TL4_E_NOT_FOUND);                            /* 9 classes walked */
+    }
+    /* mismatched buffers (MUST 7): too small fails cleanly, misaligned fails cleanly, larger is accepted */
+    CHECK_STATUS(tl4_model_build(&pe, &mui, model_buffer, need - 8, &model), TL4_E_MODEL_SIZE);
+    CHECK(model.classes == 0 && model.nprops == 0);
+    CHECK_STATUS(tl4_model_build(&pe, &mui, (uint8_t *)model_buffer + 4, need, &model), TL4_E_ARG);
+    CHECK_STATUS(tl4_model_build(&pe, &mui, model_buffer, sizeof(model_buffer), &model), TL4_OK);
+    CHECK(model.counts.props == NRECORDS + NRMAP);
+
+    /* the identical-key style: 32,768 duplicates of one record (MUST 7) */
+    variant_size = make_variant_duplicates();
+    CHECK(variant_size == NRECORDS * 40u);
+    res[5].size = variant_size;
+    bytes = pb_build(res, n, &o, image, sizeof(image), 0);
+    CHECK(bytes > 0);
+    t0 = clock();
+    CHECK_STATUS(tl4_pe_open(image, bytes, &pe), TL4_OK);
+    CHECK_STATUS(tl4_v4_validate(&pe, &mui, &s), TL4_OK);
+    need = tl4_model_size(&s);
+    CHECK(need > 0 && need <= sizeof(model_buffer));
+    CHECK_STATUS(tl4_model_build(&pe, &mui, model_buffer, need, &model), TL4_OK);
+    t1 = clock();
+    seconds = (double)(t1 - t0) / (double)CLOCKS_PER_SEC;
+    printf("identical keys: open + validate + model: %.3f s CPU (cap %.0f s)\n", seconds, cap);
+    CHECK(seconds < cap);
+    CHECK(s.variant.records == NRECORDS && s.variant.partstates == 1 && s.variant.classes == 1);
+    CHECK(model.counts.props == 1 + NRMAP && model.counts.duplicate_props == NRECORDS - 1 && model.counts.partstates == 2);
+    {
+        const tl4_prop *p;
+        uint32_t c;
+        CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 3804, &p), TL4_OK);
+        CHECK(p->seq == NRMAP);                                               /* the first VARIANT record in file order */
+        CHECK_STATUS(tl4_get_color(&model, p, &c), TL4_OK); CHECK(c == 0x1234);
+    }
 
     /* the lookups behind the resolution: one image by id, the extremes and a miss */
     {
