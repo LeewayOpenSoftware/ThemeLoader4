@@ -149,7 +149,9 @@ The proposals as submitted, with the ruling after each:
   resource 4 MB + 64 KB). **Ruled**: accepted.
 - Colour type 3 with PLTE, and `tRNS` in any shape: **ruled rejected** (no corpus evidence).
 - `tl4_pixel_budget`: R-RES-4's per-style budget as a core function the consumer calls before decoding; the budget
-  instance belongs to the consumer (the adapter: one per `THEME_FILE`).
+  instance belongs to the consumer (the adapter: one per `THEME_FILE`). The one limit is `TL4_PNG_MAX_BUDGET`
+  (16 M pixels, section 6); `tl4_pixel_budget_init` lets the consumer lower it and clamps a larger value, and `take`
+  refuses an instance whose limit is above it.
 
 ## 6. Tests, corpus, fuzzing
 

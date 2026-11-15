@@ -308,6 +308,15 @@ static void test_enum_and_budget(void)
     CHECK_STATUS(tl4_pixel_budget_take(&b, 0), TL4_OK);
     b.used = 101; CHECK_STATUS(tl4_pixel_budget_take(&b, 0), TL4_E_LIMIT);
     CHECK_STATUS(tl4_pixel_budget_take(0, 1), TL4_E_ARG);
+    /* the limit: lowered as asked, never raised; an instance above the maximum never grants */
+    CHECK_STATUS(tl4_pixel_budget_init(&b, 50), TL4_OK); CHECK(b.limit == 50 && b.used == 0);
+    CHECK_STATUS(tl4_pixel_budget_init(&b, (uint64_t)TL4_PNG_MAX_BUDGET * 4), TL4_OK);
+    CHECK(b.limit == TL4_PNG_MAX_BUDGET && b.used == 0);
+    CHECK_STATUS(tl4_pixel_budget_take(&b, TL4_PNG_MAX_BUDGET), TL4_OK);
+    CHECK_STATUS(tl4_pixel_budget_take(&b, 1), TL4_E_LIMIT);
+    b.limit = (uint64_t)TL4_PNG_MAX_BUDGET + 1; b.used = 0;
+    CHECK_STATUS(tl4_pixel_budget_take(&b, 1), TL4_E_LIMIT); CHECK(b.used == 0);
+    CHECK_STATUS(tl4_pixel_budget_init(0, 1), TL4_E_ARG);
 }
 
 /* R-V4-14 for images: the largest image the limits allow walks inside the fuzz timeout */
