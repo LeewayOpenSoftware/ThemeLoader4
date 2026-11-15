@@ -20,7 +20,8 @@
  *
  * tl4_model_find mirrors the engine's MSSTYLES_FindProperty (LiberNT dll/win32/uxtheme/msstyles.c) on the VARIANT
  * area: (part, state) along the class and its stored base chain, then (part, 0), then (0, 0); the chain is at most
- * TL4_V4_MAX_CHAIN bases followed by `globals` once, as the engine appends it, and the walk counts its steps (R-MOD-6,
+ * TL4_V4_MAX_CHAIN bases followed by `globals` once, as the engine appends it; the walk stops at `globals` and does not
+ * follow its bases, so a lookup visits at most 10 classes, and it counts its steps (R-MOD-6,
  * docs/design/L2-MODEL-DESIGN.md section 4.2). The RMAP area answers documentation queries only (tl4_model_find_rmap).
  *
  * Getters take the type and size from the model, copy the value bytes once with the range checked against the mapping
@@ -170,5 +171,11 @@ tl4_status tl4_get_metric(const tl4_model *m, const tl4_prop *p, int32_t *value)
 /* The font string parser on its own, over a copy the caller holds (tests, and the adapter's v3 path if it wants the
  * same rules). */
 tl4_status tl4_parse_font(const uint8_t *utf16, uint32_t chars, tl4_font *font);
+
+#ifdef TL4_TESTING
+/* Test hook (R-GEN-11, R-MOD-5): called by tl4_model_build after its validation and before it reads the maps and
+ * records again, with the style's bytes. Only the TL4_TESTING build of the core has it; a shipped core has no hook. */
+extern void (*tl4_model_test_between_passes)(const uint8_t *data, size_t size);
+#endif
 
 #endif
