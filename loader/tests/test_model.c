@@ -212,6 +212,23 @@ static void test_sizes_and_failures(void)
     v4f_default(&parts); parts.variant_size = 0;
     CHECK_STATUS(build(), TL4_OK);
     CHECK(model.counts.props == 1 && model.counts.partstates == 1);
+    /* the bytes change between the sizing validation and the build (R-MOD-5): a smaller style builds into the buffer
+     * sized for the larger one and is bounded by its own statistics; a larger style into the smaller buffer is refused */
+    {
+        size_t small = tl4_model_size(&model.stats);
+        v4f_default(&parts);
+        CHECK_STATUS(build(), TL4_OK);
+        need = tl4_model_size(&model.stats);
+        CHECK(small < need);
+        v4f_default(&parts); parts.variant_size = 0;
+        CHECK(v4f_build(&parts, image, sizeof(image)) > 0);               /* the bytes under `pe` are now the small style */
+        CHECK_STATUS(tl4_model_build(&pe, 0, buffer, need, &model), TL4_OK);
+        CHECK(model.counts.props == 1 && tl4_model_size(&model.stats) == small);
+        v4f_default(&parts);
+        CHECK(v4f_build(&parts, image, sizeof(image)) > 0);               /* and now the large one again */
+        CHECK_STATUS(tl4_model_build(&pe, 0, buffer, small, &model), TL4_E_MODEL_SIZE);
+        CHECK(model.classes == 0);
+    }
 }
 
 /* R-GEN-11: the bytes change after the build; every getter rejects or stays inside the mapping, and every check

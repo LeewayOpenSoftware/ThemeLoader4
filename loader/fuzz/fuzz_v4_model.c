@@ -151,8 +151,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     if (st2 != TL4_OK) PROMISE(m2.classes == NULL && m2.nprops == 0);
     else
     {
-        PROMISE(m2.nprops + m2.counts.duplicate_props <= s.variant.records + s.rmap.records);
-        PROMISE(m2.npartstates <= s.variant.partstates + s.rmap.partstates && m2.nclasses == s.cmap_names);
+        /* the new bytes may describe another style: the model is bounded by its own validation and fits the buffer */
+        PROMISE(tl4_model_size(&m2.stats) <= need && m2.nclasses == m2.stats.cmap_names);
+        PROMISE(m2.nprops + m2.counts.duplicate_props == m2.stats.variant.records + m2.stats.rmap.records);
+        PROMISE(m2.npartstates <= m2.stats.variant.partstates + m2.stats.rmap.partstates);
         queries(&m2, q, 0);
     }
 
