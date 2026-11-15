@@ -3,17 +3,21 @@
  * LICENSE:     LGPL-2.1-or-later (https://spdx.org/licenses/LGPL-2.1-or-later)
  * PURPOSE:     Fixture builder: tiny PE images with a resource section, built in memory
  * COPYRIGHT:   Copyright 2026 Leeway Open Software
+ *
+ * The grouping (types, names under a type, languages under a name) uses one pool of name groups and chains the
+ * resources of a group through item_next, so the memory is linear in PB_MAX_RESOURCES and an image at the limits
+ * of REQUIREMENTS section 6 (thousands of IMAGE entries) can be built for the R-V4-14 test.
  */
 #include "pebuild.h"
 #include <string.h>
 
 #define HEADERS_SIZE 0x200u
+#define NONE 0xFFFFFFFFu
 
 void pb_put16(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 void pb_put32(uint8_t *p, uint32_t v) { pb_put16(p, v & 0xFFFFu); pb_put16(p + 2, v >> 16); }
 uint32_t pb_get32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 
-/* A key: a string name or an id. */
 struct key {
     const char *name;
     uint32_t id;
@@ -25,7 +29,6 @@ static int key_equal(struct key a, struct key b)
     return a.id == b.id;
 }
 
-/* PE order: names before ids, names by code unit (ASCII here), ids ascending. */
 static int key_less(struct key a, struct key b)
 {
     if (a.name && !b.name) return 1;
@@ -41,20 +44,27 @@ static uint32_t str_len(const char *s)
     return n;
 }
 
-/* One name directory: the resources (indices) that share type and name, i.e. the language entries. */
 struct name_group {
     struct key key;
-    uint32_t items[PB_MAX_RESOURCES];
+    uint32_t type;          /* index into types[] */
+    uint32_t first, last;   /* resource indices, chained through item_next */
     uint32_t count;
 };
 
 struct type_group {
     struct key key;
-    struct name_group names[PB_MAX_RESOURCES];
-    uint32_t count;
+    uint32_t count;         /* name groups under this type */
 };
 
-static void sort_keys(struct key *keys, uint32_t *perm, uint32_t n)
+/* static: the tables are large for a stack frame; the builder is single-threaded test code */
+static struct type_group types[PB_MAX_RESOURCES];
+static struct name_group names[PB_MAX_RESOURCES];
+static uint32_t item_next[PB_MAX_RESOURCES];
+static uint32_t tperm[PB_MAX_RESOURCES], nperm[PB_MAX_RESOURCES], nidx[PB_MAX_RESOURCES], lperm[PB_MAX_RESOURCES],
+                litems[PB_MAX_RESOURCES];
+static struct key tkeys[PB_MAX_RESOURCES], nkeys[PB_MAX_RESOURCES];
+
+static void sort_keys(const struct key *keys, uint32_t *perm, uint32_t n)
 {
     uint32_t i, j;
     for (i = 1; i < n; i++)
@@ -76,29 +86,35 @@ static uint32_t write_string(uint8_t *r, uint32_t *str_cur, const char *s)
 
 size_t pb_build(const pb_res *res, size_t count, const pb_options *opt, uint8_t *out, size_t cap, pb_layout *layout)
 {
-    static struct type_group types[PB_MAX_RESOURCES];   /* static: the groups are large for a stack frame */
     pb_options o = {1, 0, 0, 0};
-    uint32_t ntypes = 0, i, j, t;
+    uint32_t ntypes = 0, nnames = 0, i, j, t, g;
     uint32_t dir_bytes, str_bytes, data_bytes, raw_size, rsrc_va, rsrc_raw, nsections, sh_off, opt_size;
-    uint32_t tperm[PB_MAX_RESOURCES];
     uint8_t *p;
 
     if (opt) o = *opt;
     if (o.rsrc_va == 0) o.rsrc_va = 0x1000;
     if (count == 0 || count > PB_MAX_RESOURCES || o.extra_sections > 4) return 0;
-    memset(types, 0, sizeof(types));
 
     /* group: types in order of first appearance, names under each, languages in input order */
     for (i = 0; i < count; i++)
     {
         struct key tk = {res[i].type_name, res[i].type_id}, nk = {res[i].name_name, res[i].name_id};
-        struct type_group *tg;
         for (t = 0; t < ntypes; t++) if (key_equal(types[t].key, tk)) break;
-        if (t == ntypes) { types[ntypes].key = tk; ntypes++; }
-        tg = &types[t];
-        for (j = 0; j < tg->count; j++) if (key_equal(tg->names[j].key, nk)) break;
-        if (j == tg->count) { tg->names[j].key = nk; tg->count++; }
-        tg->names[j].items[tg->names[j].count++] = i;
+        if (t == ntypes) { types[ntypes].key = tk; types[ntypes].count = 0; ntypes++; }
+        for (g = 0; g < nnames; g++) if (names[g].type == t && key_equal(names[g].key, nk)) break;
+        item_next[i] = NONE;
+        if (g == nnames)
+        {
+            names[g].key = nk; names[g].type = t; names[g].first = names[g].last = i; names[g].count = 1;
+            types[t].count++;
+            nnames++;
+        }
+        else
+        {
+            item_next[names[g].last] = i;
+            names[g].last = i;
+            names[g].count++;
+        }
     }
 
     /* sizes */
@@ -109,11 +125,11 @@ size_t pb_build(const pb_res *res, size_t count, const pb_options *opt, uint8_t 
     {
         dir_bytes += 16 + 8 * types[t].count;
         if (types[t].key.name) str_bytes += 2 + 2 * str_len(types[t].key.name);
-        for (j = 0; j < types[t].count; j++)
-        {
-            dir_bytes += 16 + 8 * types[t].names[j].count;
-            if (types[t].names[j].key.name) str_bytes += 2 + 2 * str_len(types[t].names[j].key.name);
-        }
+    }
+    for (g = 0; g < nnames; g++)
+    {
+        dir_bytes += 16 + 8 * names[g].count;
+        if (names[g].key.name) str_bytes += 2 + 2 * str_len(names[g].key.name);
     }
     dir_bytes += 16 * (uint32_t)count;                   /* data entries */
     str_bytes = (str_bytes + 7u) & ~7u;
@@ -181,7 +197,6 @@ size_t pb_build(const pb_res *res, size_t count, const pb_options *opt, uint8_t 
         uint32_t tdir = 16 + 8 * ntypes;                 /* the first type directory */
         uint32_t ldir;                                   /* the first language directory */
         uint32_t data_index = 0, named_types = 0;
-        struct key tkeys[PB_MAX_RESOURCES];
 
         for (t = 0; t < ntypes; t++) { tkeys[t] = types[t].key; tperm[t] = t; if (types[t].key.name) named_types++; }
         if (!o.unsorted) sort_keys(tkeys, tperm, ntypes);
@@ -195,39 +210,45 @@ size_t pb_build(const pb_res *res, size_t count, const pb_options *opt, uint8_t 
 
         for (t = 0; t < ntypes; t++)
         {
-            struct type_group *tg = &types[tperm[t]];
-            uint32_t this_tdir = tdir, k, named_names = 0, nperm[PB_MAX_RESOURCES];
-            struct key nkeys[PB_MAX_RESOURCES];
+            const struct type_group *tg = &types[tperm[t]];
+            uint32_t this_tdir = tdir, k, m = 0, named_names = 0;
             for (k = 0; k < t; k++) this_tdir += 16 + 8 * types[tperm[k]].count;
 
             pb_put32(r + 16 + 8 * t, tg->key.name ? write_string(r, &str_cur, tg->key.name) : tg->key.id);
             pb_put32(r + 16 + 8 * t + 4, 0x80000000u | this_tdir);
 
-            for (j = 0; j < tg->count; j++) { nkeys[j] = tg->names[j].key; nperm[j] = j; if (tg->names[j].key.name) named_names++; }
-            if (!o.unsorted) sort_keys(nkeys, nperm, tg->count);
+            /* the name groups of this type, in pool order, then sorted unless the caller wants them as given */
+            for (g = 0; g < nnames; g++)
+                if (names[g].type == tperm[t])
+                {
+                    nkeys[m] = names[g].key; nidx[m] = g; nperm[m] = m;
+                    if (names[g].key.name) named_names++;
+                    m++;
+                }
+            if (!o.unsorted) sort_keys(nkeys, nperm, m);
             pb_put16(r + this_tdir + 12, named_names);
-            pb_put16(r + this_tdir + 14, tg->count - named_names);
+            pb_put16(r + this_tdir + 14, m - named_names);
 
-            for (j = 0; j < tg->count; j++)
+            for (j = 0; j < m; j++)
             {
-                struct name_group *ng = &tg->names[nperm[j]];
-                uint32_t l, lperm[PB_MAX_RESOURCES];
+                const struct name_group *ng = &names[nidx[nperm[j]]];
+                uint32_t l, item;
 
                 pb_put32(r + this_tdir + 16 + 8 * j, ng->key.name ? write_string(r, &str_cur, ng->key.name) : ng->key.id);
                 pb_put32(r + this_tdir + 16 + 8 * j + 4, 0x80000000u | ldir);
 
-                for (l = 0; l < ng->count; l++) lperm[l] = l;
+                for (l = 0, item = ng->first; item != NONE; item = item_next[item]) { litems[l] = item; lperm[l] = l; l++; }
                 if (!o.unsorted)
                     for (l = 1; l < ng->count; l++)
                     {
-                        uint32_t q = lperm[l], m;
-                        for (m = l; m > 0 && res[ng->items[q]].language < res[ng->items[lperm[m - 1]]].language; m--) lperm[m] = lperm[m - 1];
-                        lperm[m] = q;
+                        uint32_t q = lperm[l], w;
+                        for (w = l; w > 0 && res[litems[q]].language < res[litems[lperm[w - 1]]].language; w--) lperm[w] = lperm[w - 1];
+                        lperm[w] = q;
                     }
                 pb_put16(r + ldir + 14, ng->count);
                 for (l = 0; l < ng->count; l++)
                 {
-                    const pb_res *rs = &res[ng->items[lperm[l]]];
+                    const pb_res *rs = &res[litems[lperm[l]]];
                     pb_put32(r + ldir + 16 + 8 * l, rs->language);
                     pb_put32(r + ldir + 16 + 8 * l + 4, dataent_cur);
                     pb_put32(r + dataent_cur, rsrc_va + data_cur);

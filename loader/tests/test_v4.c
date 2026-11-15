@@ -79,7 +79,7 @@ static void test_cmap(void)
     v4f_default(&parts); parts.cmap_size -= 1; expect_reject(TL4_E_V4_CMAP, "R-V4-2 odd size");
     v4f_default(&parts); parts.cmap[parts.cmap_size - 2] = 'x'; parts.cmap[parts.cmap_size - 1] = 0; expect_reject(TL4_E_V4_CMAP, "R-V4-2 unterminated last name");
     n = v4b_cmap(buf, sizeof(buf), dup, 4); CHECK(n > 0);
-    CHECK_STATUS(tl4_v4_check_cmap(buf, n, &cm), TL4_E_V4_CMAP);              /* duplicate */
+    CHECK_STATUS(tl4_v4_check_cmap(buf, n, &cm), TL4_OK); CHECK(cm.count == 4);  /* a repeated name is allowed (R-V4-2 ruling) */
     n = v4b_cmap(buf, sizeof(buf), two, 3); CHECK_STATUS(tl4_v4_check_cmap(buf, n, &cm), TL4_E_V4_CMAP);        /* two :: */
     n = v4b_cmap(buf, sizeof(buf), empty_half, 3); CHECK_STATUS(tl4_v4_check_cmap(buf, n, &cm), TL4_E_V4_CMAP); /* empty half */
     n = v4b_cmap(buf, sizeof(buf), long_half, 3); CHECK_STATUS(tl4_v4_check_cmap(buf, n, &cm), TL4_E_V4_CMAP);  /* 60 > 59 */

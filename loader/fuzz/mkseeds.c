@@ -13,6 +13,7 @@
 #include "v4fixture.h"
 
 static uint8_t image[64 * 1024];
+static uint8_t prefixed[64 * 1024 + 2];
 
 static int write_file(const char *dir, const char *sub, const char *name, const uint8_t *data, size_t size)
 {
@@ -85,8 +86,11 @@ int main(int argc, char **argv)
     blobbuf[0] = 2; blobbuf[1] = 5; memcpy(blobbuf + 2, parts.bcmap, parts.bcmap_size);        rc |= write_file(dir, "v4_blob", "bcmap.bin", blobbuf, 2 + parts.bcmap_size);
     blobbuf[0] = 3; blobbuf[1] = 5; memcpy(blobbuf + 2, parts.variant, parts.variant_size);    rc |= write_file(dir, "v4_blob", "variant.bin", blobbuf, 2 + parts.variant_size);
     blobbuf[0] = 3; blobbuf[1] = 5; memcpy(blobbuf + 2, parts.rmap, parts.rmap_size);          rc |= write_file(dir, "v4_blob", "rmap.bin", blobbuf, 2 + parts.rmap_size);
+    /* selector 4: the whole style as a PE, the second byte picks string ids (5 -> 501, the font) */
+    n = v4f_build(&parts, image, sizeof(image));
+    prefixed[0] = 4; prefixed[1] = 5; memcpy(prefixed + 2, image, n);                          rc |= !n || write_file(dir, "v4_blob", "strings.bin", prefixed, 2 + n);
 
     if (rc) { fprintf(stderr, "mkseeds: failed\n"); return 1; }
-    printf("mkseeds: 13 seeds written under %s\n", dir);
+    printf("mkseeds: 14 seeds written under %s\n", dir);
     return 0;
 }

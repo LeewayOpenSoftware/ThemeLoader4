@@ -89,7 +89,8 @@ tl4_res_name tl4_res_ascii(const char *ascii);
  * unreachable rather than ambiguous (review MUST 3). Two queries are compared folded. */
 int tl4_res_name_equal(const tl4_res_name *a, const tl4_res_name *b);
 
-/* Validate the headers and the whole resource tree. On success every later call only re-walks validated memory. */
+/* Validate the headers and the whole resource tree. On success every later call only re-reads validated memory: enum
+ * walks it again, find and count_type binary-search the directories on the order of R-PE-8 (R-V4-14). */
 tl4_status tl4_pe_open(const uint8_t *base, size_t size, tl4_pe *pe);
 
 /* Enumerate every resource. The callback returns 0 to continue, nonzero to stop; the nonzero value is reported
@@ -100,7 +101,7 @@ tl4_status tl4_pe_enum(const tl4_pe *pe, tl4_res_callback callback, void *contex
 /* Find the resource (type, name); there is exactly one language entry (R-PE-8). */
 tl4_status tl4_pe_find(const tl4_pe *pe, const tl4_res_name *type, const tl4_res_name *name, tl4_resource *out);
 
-/* Count the name entries under a type: TL4_OK with *count (0 when the type is absent), or the walk's error. */
+/* Count the name entries under a type: TL4_OK with *count (0 when the type is absent), or the lookup's error. */
 tl4_status tl4_pe_count_type(const tl4_pe *pe, const tl4_res_name *type, uint32_t *count);
 
 #endif

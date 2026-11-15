@@ -17,6 +17,11 @@ if(TL4_BUILD_TESTS)
 
     tl4_add_test(tl4_loader_test_pe SOURCES tests/test_pe.c LIBS tl4_loader_core tl4_loader_fixtures)
     tl4_add_test(tl4_loader_test_v4 SOURCES tests/test_v4.c LIBS tl4_loader_core tl4_loader_fixtures)
+    # R-V4-14: a style at the limits validates inside the fuzz timeout; the CPU bound applies to plain builds only
+    tl4_add_test(tl4_loader_test_v4_limits SOURCES tests/test_v4_limits.c LIBS tl4_loader_core tl4_loader_fixtures)
+    if(TL4_SANITIZE OR TL4_FUZZ)
+        target_compile_definitions(tl4_loader_test_v4_limits PRIVATE TL4_SANITIZED=1)
+    endif()
 
     # Corpus runner (R-V4-13): reads TL4_CORPUS_DIR at run time, exit 77 = skipped when it is unset. The reference
     # files never enter the repository; tests/corpus-expected.csv holds their statistics only.
@@ -59,7 +64,8 @@ if(TL4_BUILD_TESTS)
                  "${TL4_LOADER_SEEDS}/v4_style/valid.bin" "${TL4_LOADER_SEEDS}/v4_style/no_bcmap.bin" "${TL4_LOADER_SEEDS}/v4_style/empty_variant.bin")
         add_test(NAME tl4_loader_fuzz_v4_blob_seeds COMMAND tl4_loader_fuzz_v4_blob_seeds
                  "${TL4_LOADER_SEEDS}/v4_blob/cmap.bin" "${TL4_LOADER_SEEDS}/v4_blob/vmap.bin" "${TL4_LOADER_SEEDS}/v4_blob/bcmap.bin"
-                 "${TL4_LOADER_SEEDS}/v4_blob/variant.bin" "${TL4_LOADER_SEEDS}/v4_blob/rmap.bin")
+                 "${TL4_LOADER_SEEDS}/v4_blob/variant.bin" "${TL4_LOADER_SEEDS}/v4_blob/rmap.bin"
+                 "${TL4_LOADER_SEEDS}/v4_blob/strings.bin")
         set_tests_properties(tl4_loader_fuzz_pe_seeds tl4_loader_fuzz_v4_style_seeds tl4_loader_fuzz_v4_blob_seeds
                              PROPERTIES DEPENDS tl4_loader_mkseeds)
     endif()

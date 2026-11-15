@@ -5,7 +5,8 @@
  * COPYRIGHT:   Copyright 2026 Leeway Open Software
  *
  * The first input byte selects the piece: 0 CMAP (then every name is fetched), 1 VMAP, 2 BCMAP (the second byte is
- * the CMAP count), 3 records (the second byte is the CMAP count). Every promise of the API is asserted.
+ * the CMAP count), 3 records (the second byte is the CMAP count), 4 string table (the blob is a PE image and the
+ * second byte chooses the string ids asked of tl4_v4_find_string). Every promise of the API is asserted.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -14,6 +15,13 @@
 #include <tl4/loader/v4.h>
 
 #define PROMISE(cond) do { if (!(cond)) abort(); } while (0)
+
+static int walk_equal(const tl4_v4_walk_stats *a, const tl4_v4_walk_stats *b)
+{
+    return a->records == b->records && a->dropped_unknown_type == b->dropped_unknown_type &&
+           a->dropped_ref_on_value == b->dropped_ref_on_value && a->partstates == b->partstates &&
+           a->classes == b->classes && a->max_part == b->max_part && a->max_state == b->max_state && a->max_cb == b->max_cb;
+}
 
 static int count_cb(const tl4_v4_record *r, void *ctx)
 {
@@ -40,13 +48,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     if (!copy) return 0;
     memcpy(copy, data + 2, len);
 
-    switch (data[0] & 3)
+    switch (data[0] % 5)
     {
         case 0:
         {
             tl4_v4_cmap cm, cm2;
             tl4_status st = tl4_v4_check_cmap(copy, len, &cm), st2 = tl4_v4_check_cmap(copy, len, &cm2);
-            PROMISE(st == st2 && cm.count == cm2.count);                         /* R-GEN-8 */
+            PROMISE(st == st2 && cm.count == cm2.count && cm.size == cm2.size && cm.data == cm2.data);   /* R-GEN-8 */
             if (st == TL4_OK)
             {
                 uint32_t i; const uint8_t *s; uint32_t chars;
@@ -91,13 +99,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
                 PROMISE(bm.count == 0 && bm.data == NULL);
             break;
         }
-        default:
+        case 3:
         {
             tl4_v4_walk_stats ws, ws2;
             uint32_t n = 0, n2 = 0, cmap_count = (uint32_t)data[1] + 1u;
             tl4_status st = tl4_v4_walk_records(copy, len, cmap_count, TL4_V4_MAX_VARIANT_BYTES, TL4_V4_MAX_RECORDS, count_cb, &n, &ws);
             tl4_status st2 = tl4_v4_walk_records(copy, len, cmap_count, TL4_V4_MAX_VARIANT_BYTES, TL4_V4_MAX_RECORDS, count_cb, &n2, &ws2);
-            PROMISE(st == st2 && n == n2 && ws.records == ws2.records);          /* R-GEN-8 */
+            PROMISE(st == st2 && n == n2 && walk_equal(&ws, &ws2));              /* R-GEN-8 */
             if (st == TL4_OK)
             {
                 PROMISE(ws.records == n && ws.records <= TL4_V4_MAX_RECORDS);
@@ -106,6 +114,30 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
             }
             else
                 PROMISE(ws.records == 0 && ws.partstates == 0);                  /* R-GEN-5 */
+            break;
+        }
+        default:
+        {
+            /* the string table through the reader: ids below, inside and above the fixture's block, one over 16 bits */
+            tl4_pe pe;
+            uint32_t ids[4], i;
+            ids[0] = data[1];
+            ids[1] = (uint32_t)data[1] * 257u;
+            ids[2] = 496u + (data[1] & 15u);
+            ids[3] = 0x10000u + data[1];
+            if (tl4_pe_open(copy, len, &pe) != TL4_OK) { PROMISE(pe.base == NULL); break; }
+            for (i = 0; i < 4; i++)
+            {
+                const uint8_t *s, *s2; uint32_t chars, chars2;
+                tl4_status st = tl4_v4_find_string(&pe, ids[i], &s, &chars);
+                tl4_status st2 = tl4_v4_find_string(&pe, ids[i], &s2, &chars2);
+                PROMISE(st == st2 && s == s2 && chars == chars2);                /* R-GEN-8 */
+                if (st == TL4_OK)
+                    PROMISE(chars >= 1 && chars <= TL4_V4_MAX_FONT_CHARS && s >= copy && (size_t)(s - copy) + 2u * chars <= len);
+                else
+                    PROMISE(s == NULL && chars == 0);                            /* R-GEN-5 */
+                if (ids[i] > 0xFFFFu) PROMISE(st == TL4_E_ARG);
+            }
             break;
         }
     }

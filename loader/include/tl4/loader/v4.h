@@ -7,12 +7,15 @@
  * The validator reads a style through the bounded PE reader only (R-PE-1), allocates nothing (R-GEN-7), reads every
  * field unsigned and range-checks it (R-GEN-4), and returns counts, never a model. A rejected style leaves the
  * statistics cleared (R-GEN-5). It is the one validator for install and load (R-GEN-10): both callers pass the same
- * bytes and get the same answer (R-GEN-8).
+ * bytes and get the same answer (R-GEN-8). Its cost is bounded at the limits (R-V4-14): every lookup through the
+ * reader is a binary search on the directory order of R-PE-8 and no pass compares every pair of names.
  *
  * Format facts (VERIFIED on the 32 reference styles, docs/design/V4-LOADER-SKETCH.md):
  *  - CMAP: UTF-16 class names, each NUL-terminated and padded to 8 bytes; the class id of a record is the ordinal of
  *    the n-th non-empty name. The first names (documentation, sizevariant.*, colorvariant.*) describe the file, not a
- *    class; BCMAP counts from the first real class.
+ *    class; BCMAP counts from the first real class. A name may repeat (R-V4-2 ruling; three third-party styles
+ *    do): every ordinal stays valid, a lookup by name (L2) takes the lowest ordinal, and the validator does not
+ *    search for duplicates.
  *  - VMAP: three strings, each a uint32 count of UTF-16 characters including the NUL, the text, padding to 4 bytes.
  *  - BCMAP: uint32 N, then N uint32 entries; entry j belongs to class ordinal j + (CMAP count - N); a value is
  *    0xFFFFFFFF (no base) or the base class in the same shifted ordinal space.
@@ -82,7 +85,9 @@ typedef struct tl4_v4_walk_stats {
     uint32_t records;              /* records accepted (inline or reference) */
     uint32_t dropped_unknown_type; /* R-V4-8: type outside the known set */
     uint32_t dropped_ref_on_value; /* R-V4-8: reference != 0 on a type that carries none */
-    uint32_t partstates;           /* changes of (class, part, state) between consecutive records: an upper bound */
+    uint32_t partstates;           /* changes of (class, part, state) between consecutive records: an upper bound of
+                                      the true count, exact when records are grouped (every reference style is);
+                                      an ungrouped style could hit the limit early; L2 reports the true count */
     uint32_t classes;              /* changes of class between consecutive records: an upper bound */
     uint32_t max_part, max_state, max_cb;
 } tl4_v4_walk_stats;
@@ -104,7 +109,8 @@ typedef int (*tl4_v4_record_callback)(const tl4_v4_record *rec, void *context);
 
 /* The pieces, each usable on one raw blob (the fuzz harness fuzz_v4_blob does), all without allocation. */
 tl4_status tl4_v4_check_cmap(const uint8_t *data, uint32_t size, tl4_v4_cmap *out);
-/* The n-th class name of a validated map; O(n) scan, bounded by the map. */
+/* The n-th class name of a validated map: an O(n) scan of the map, bounded. Not for per-record use (R-MOD-1): the
+ * model builder (L2) reads every name once when it builds its index. */
 tl4_status tl4_v4_cmap_name(const tl4_v4_cmap *cmap, uint32_t ordinal, const uint8_t **utf16, uint32_t *chars);
 tl4_status tl4_v4_check_vmap(const uint8_t *data, uint32_t size, tl4_v4_vmap *out);
 tl4_status tl4_v4_check_bcmap(const uint8_t *data, uint32_t size, uint32_t cmap_count, tl4_v4_bcmap *out);

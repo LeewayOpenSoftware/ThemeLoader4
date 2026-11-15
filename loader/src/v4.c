@@ -16,14 +16,19 @@ static int in_range(uint32_t size, uint64_t off, uint64_t len)
     return off <= size && len <= (uint64_t)size - off;
 }
 
-static uint32_t rd32(const uint8_t *p)
+/* Every read names the buffer, its size and an offset, and fails by itself (R-GEN-2), as in pe.c. */
+static int rd32(const uint8_t *d, uint32_t size, uint64_t off, uint32_t *v)
 {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+    if (!in_range(size, off, 4)) return 0;
+    *v = (uint32_t)d[off] | ((uint32_t)d[off + 1] << 8) | ((uint32_t)d[off + 2] << 16) | ((uint32_t)d[off + 3] << 24);
+    return 1;
 }
 
-static uint32_t rd16(const uint8_t *p)
+static int rd16(const uint8_t *d, uint32_t size, uint64_t off, uint32_t *v)
 {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8);
+    if (!in_range(size, off, 2)) return 0;
+    *v = (uint32_t)d[off] | ((uint32_t)d[off + 1] << 8);
+    return 1;
 }
 
 /* ---- class map (R-V4-2) ------------------------------------------------------------------------------------ */
@@ -31,31 +36,23 @@ static uint32_t rd16(const uint8_t *p)
 /* Length in characters of the NUL-terminated UTF-16 string at off, or 0 when no NUL lies inside the map. */
 static uint32_t utf16z_len(const uint8_t *data, uint32_t size, uint32_t off)
 {
-    uint32_t n = 0;
-    while (in_range(size, (uint64_t)off + 2u * n, 2))
+    uint32_t n = 0, c;
+    while (rd16(data, size, (uint64_t)off + 2u * n, &c))
     {
-        if (rd16(data + off + 2u * n) == 0) return n;
+        if (c == 0) return n;
         n++;
     }
     return 0; /* unterminated: treated as "no string here" by the caller, which then rejects */
 }
 
-static int same_name(const uint8_t *a, uint32_t alen, const uint8_t *b, uint32_t blen)
-{
-    uint32_t i;
-    if (alen != blen) return 0;
-    for (i = 0; i < alen; i++)
-        if (rd16(a + 2 * i) != rd16(b + 2 * i)) return 0;
-    return 1;
-}
-
 /* Check one name: at most one "::", both halves 1..59 characters (R-V4-2). */
-static int name_shape_ok(const uint8_t *s, uint32_t chars)
+static int name_shape_ok(const uint8_t *data, uint32_t size, uint32_t off, uint32_t chars)
 {
-    uint32_t i, sep = chars;
+    uint32_t i, sep = chars, a, b;
     for (i = 0; i + 1 < chars; i++)
     {
-        if (rd16(s + 2 * i) == ':' && rd16(s + 2 * (i + 1)) == ':')
+        if (!rd16(data, size, (uint64_t)off + 2u * i, &a) || !rd16(data, size, (uint64_t)off + 2u * (i + 1), &b)) return 0;
+        if (a == ':' && b == ':')
         {
             if (sep != chars) return 0;    /* a second "::" */
             sep = i;
@@ -68,7 +65,7 @@ static int name_shape_ok(const uint8_t *s, uint32_t chars)
 
 tl4_status tl4_v4_check_cmap(const uint8_t *data, uint32_t size, tl4_v4_cmap *out)
 {
-    uint32_t off = 0, count = 0, i, j;
+    uint32_t off = 0, count = 0, c;
     if (!out) return TL4_E_ARG;
     out->data = 0; out->size = 0; out->count = 0;
     if (!data) return TL4_E_ARG;
@@ -78,11 +75,12 @@ tl4_status tl4_v4_check_cmap(const uint8_t *data, uint32_t size, tl4_v4_cmap *ou
     /* first pass: count the names and check each one's shape; the padding between names is zero code units */
     while (off < size)
     {
-        if (rd16(data + off) == 0) { off += 2; continue; }
+        if (!rd16(data, size, off, &c)) return TL4_E_V4_CMAP;
+        if (c == 0) { off += 2; continue; }
         {
             uint32_t len = utf16z_len(data, size, off);
             if (len == 0) return TL4_E_V4_CMAP;            /* unterminated */
-            if (!name_shape_ok(data + off, len)) return TL4_E_V4_CMAP;
+            if (!name_shape_ok(data, size, off, len)) return TL4_E_V4_CMAP;
             if (count == TL4_V4_MAX_CLASSES) return TL4_E_V4_LIMIT;
             count++;
             off += 2u * (len + 1);
@@ -90,31 +88,20 @@ tl4_status tl4_v4_check_cmap(const uint8_t *data, uint32_t size, tl4_v4_cmap *ou
     }
     if (count == 0) return TL4_E_V4_CMAP;
     out->data = data; out->size = size; out->count = count;
-
-    /* second pass: no duplicate names (quadratic over at most 1,024 names, no memory) */
-    for (i = 0; i + 1 < count; i++)
-    {
-        const uint8_t *a; uint32_t alen;
-        if (tl4_v4_cmap_name(out, i, &a, &alen) != TL4_OK) return TL4_E_V4_CMAP;
-        for (j = i + 1; j < count; j++)
-        {
-            const uint8_t *b; uint32_t blen;
-            if (tl4_v4_cmap_name(out, j, &b, &blen) != TL4_OK) return TL4_E_V4_CMAP;
-            if (same_name(a, alen, b, blen)) { out->data = 0; out->size = 0; out->count = 0; return TL4_E_V4_CMAP; }
-        }
-    }
+    /* a repeated name is allowed (R-V4-2 ruling): no pairwise pass over the map (R-V4-14) */
     return TL4_OK;
 }
 
 tl4_status tl4_v4_cmap_name(const tl4_v4_cmap *cmap, uint32_t ordinal, const uint8_t **utf16, uint32_t *chars)
 {
-    uint32_t off = 0, n = 0;
+    uint32_t off = 0, n = 0, c;
     if (!cmap || !cmap->data || !utf16 || !chars) return TL4_E_ARG;
     *utf16 = 0; *chars = 0;
     if (ordinal >= cmap->count) return TL4_E_NOT_FOUND;
     while (off < cmap->size)
     {
-        if (rd16(cmap->data + off) == 0) { off += 2; continue; }
+        if (!rd16(cmap->data, cmap->size, off, &c)) return TL4_E_V4_CMAP;
+        if (c == 0) { off += 2; continue; }
         {
             uint32_t len = utf16z_len(cmap->data, cmap->size, off);
             if (len == 0) return TL4_E_V4_CMAP;
@@ -130,12 +117,11 @@ tl4_status tl4_v4_cmap_name(const tl4_v4_cmap *cmap, uint32_t ordinal, const uin
 
 static tl4_status vmap_string(const uint8_t *data, uint32_t size, uint32_t *off, const uint8_t **s, uint32_t *chars)
 {
-    uint32_t n;
-    if (!in_range(size, *off, 4)) return TL4_E_V4_VMAP;
-    n = rd32(data + *off);                                /* characters including the terminating NUL */
+    uint32_t n, c;
+    if (!rd32(data, size, *off, &n)) return TL4_E_V4_VMAP; /* characters including the terminating NUL */
     if (n < 2 || n > TL4_V4_MAX_VMAP_CHARS) return TL4_E_V4_VMAP;
     if (!in_range(size, (uint64_t)*off + 4, (uint64_t)n * 2)) return TL4_E_V4_VMAP;
-    if (rd16(data + *off + 4 + 2 * (n - 1)) != 0) return TL4_E_V4_VMAP;
+    if (!rd16(data, size, (uint64_t)*off + 4 + 2u * (n - 1), &c) || c != 0) return TL4_E_V4_VMAP;
     *s = data + *off + 4;
     *chars = n - 1;
     *off = (uint32_t)(((uint64_t)*off + 4 + (uint64_t)n * 2 + 3) & ~(uint64_t)3);
@@ -171,7 +157,7 @@ tl4_status tl4_v4_bcmap_base(const tl4_v4_bcmap *bcmap, uint32_t ordinal, uint32
     *base = NO_BASE;
     if (ordinal < bcmap->shift) return TL4_OK;            /* a descriptor name has no base */
     if (ordinal - bcmap->shift >= bcmap->count) return TL4_E_NOT_FOUND;
-    v = rd32(bcmap->data + 4 + 4 * (ordinal - bcmap->shift));
+    if (!rd32(bcmap->data, 4u + 4u * bcmap->count, 4u + 4u * (ordinal - bcmap->shift), &v)) return TL4_E_NOT_FOUND;
     if (v != NO_BASE) *base = v + bcmap->shift;
     return TL4_OK;
 }
@@ -183,18 +169,19 @@ tl4_status tl4_v4_check_bcmap(const uint8_t *data, uint32_t size, uint32_t cmap_
     out->data = 0; out->count = 0; out->shift = 0; out->max_depth = 0;
     if (!data) return TL4_E_ARG;
     if (size < 4 || (size & 3u)) return TL4_E_V4_BCMAP;
-    n = rd32(data);
+    if (!rd32(data, size, 0, &n)) return TL4_E_V4_BCMAP;
     if ((uint64_t)n + 1 != size / 4) return TL4_E_V4_BCMAP;
     if (n > cmap_count || cmap_count - n > TL4_V4_MAX_DESCRIPTORS) return TL4_E_V4_BCMAP;
     out->data = data; out->count = n; out->shift = cmap_count - n;
     for (j = 0; j < n; j++)
     {
-        uint32_t v = rd32(data + 4 + 4 * j), depth = 0, cur = j;
-        if (v != NO_BASE && v >= n) goto bad;
+        uint32_t v, depth = 0, cur = j;
         /* the chain from j must end within TL4_V4_MAX_CHAIN steps: a cycle or a longer chain is a reject */
-        while (rd32(data + 4 + 4 * cur) != NO_BASE)
+        for (;;)
         {
-            cur = rd32(data + 4 + 4 * cur);
+            if (!rd32(data, size, 4u + 4u * cur, &v)) goto bad;
+            if (v == NO_BASE) break;
+            cur = v;
             if (cur >= n) goto bad;
             if (++depth > TL4_V4_MAX_CHAIN) goto bad;
         }
@@ -248,19 +235,16 @@ tl4_status tl4_v4_walk_records(const uint8_t *data, uint32_t size, uint32_t cmap
     while (off < size)
     {
         tl4_v4_record r;
-        uint32_t known;
+        uint32_t known, c;
         int accept = 1;
 
         if (!in_range(size, off, RECORD_HEADER)) return TL4_E_V4_END;   /* a partial header at the end */
-        r.name_id = rd32(data + off);
-        r.type_id = rd32(data + off + 4);
-        r.class_id = rd32(data + off + 8);
-        r.part_id = rd32(data + off + 12);
-        r.state_id = rd32(data + off + 16);
-        r.reference = rd32(data + off + 20);
+        if (!rd32(data, size, off, &r.name_id) || !rd32(data, size, off + 4, &r.type_id) ||
+            !rd32(data, size, off + 8, &r.class_id) || !rd32(data, size, off + 12, &r.part_id) ||
+            !rd32(data, size, off + 16, &r.state_id) || !rd32(data, size, off + 20, &r.reference) ||
+            !rd32(data, size, off + 28, &r.cb_data)) return TL4_E_V4_END;
         /* the seventh field (offset 24) is not interpreted: it is 0 in the stock styles and carries other values in
          * inline and reference records of third-party styles (R-V4-5 as amended) */
-        r.cb_data = rd32(data + off + 28);
         r.data = 0;
 
         /* R-V4-5: every field unsigned and in range */
@@ -301,14 +285,14 @@ tl4_status tl4_v4_walk_records(const uint8_t *data, uint32_t size, uint32_t cmap
                 {
                     uint32_t count;
                     if (r.cb_data < 4) return TL4_E_V4_SIZE;
-                    count = rd32(data + off + RECORD_HEADER);
+                    if (!rd32(data, size, off + RECORD_HEADER, &count)) return TL4_E_V4_SIZE;
                     if (count > TL4_V4_MAX_INTLIST) return TL4_E_V4_SIZE;
                     if (r.cb_data != 4u + 4u * count) return TL4_E_V4_SIZE;
                 }
                 else /* STRING */
                 {
                     if (r.cb_data < 2 || (r.cb_data & 1u) || r.cb_data > TL4_V4_MAX_STRING_BYTES) return TL4_E_V4_SIZE;
-                    if (rd16(data + off + RECORD_HEADER + r.cb_data - 2) != 0) return TL4_E_V4_SIZE;
+                    if (!rd16(data, size, off + RECORD_HEADER + r.cb_data - 2, &c) || c != 0) return TL4_E_V4_SIZE;
                 }
             }
             else if (r.cb_data != known)
@@ -355,8 +339,7 @@ tl4_status tl4_v4_find_string(const tl4_pe *pe, uint32_t id, const uint8_t **utf
     for (i = 0; i < 16; i++)
     {
         uint32_t len;
-        if (!in_range(block.size, off, 2)) return TL4_E_NOT_FOUND;
-        len = rd16(block.data + off);
+        if (!rd16(block.data, block.size, off, &len)) return TL4_E_NOT_FOUND;
         off += 2;
         if (!in_range(block.size, off, (uint64_t)len * 2)) return TL4_E_NOT_FOUND;
         if (i == want)
@@ -448,7 +431,7 @@ tl4_status tl4_v4_validate(const tl4_pe *style, const tl4_pe *strings, tl4_v4_st
 
     /* R-V4-1 */
     t = tl4_res_ascii("PACKTHEM_VERSION"); n = tl4_res_id(1);
-    if (tl4_pe_find(style, &t, &n, &res) != TL4_OK || res.size != 2 || rd16(res.data) != 4) { st = TL4_E_V4_VERSION; goto fail; }
+    if (tl4_pe_find(style, &t, &n, &res) != TL4_OK || res.size != 2 || !rd16(res.data, res.size, 0, &cnt) || cnt != 4) { st = TL4_E_V4_VERSION; goto fail; }
 
     /* R-V4-2 */
     if ((st = find_named(style, "CMAP", "CMAP", &res)) != TL4_OK) goto fail;
