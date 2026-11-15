@@ -195,7 +195,7 @@ int main(void)
         CHECK_STATUS(tl4_pe_find(&probe, &t, &t, &r), TL4_OK);
         for (k = 0; k < 4; k++) off += (2u * ((uint32_t)strlen(name_ptrs[k]) + 1u) + 7u) & ~7u;
         first_name_nul = r.offset + off + 2u * NAME_CHARS;
-        CHECK(image[first_name_nul] == 0 && image[first_name_nul - 2] == 'z');
+        CHECK(image[first_name_nul] == 0 && image[first_name_nul - 2] == (uint8_t)name_ptrs[4][NAME_CHARS - 1]);
     }
     t0 = clock();
     CHECK_STATUS(tl4_pe_open(image, bytes, &pe), TL4_OK);
@@ -248,6 +248,7 @@ int main(void)
     CHECK_STATUS(tl4_model_build(&pe, &mui, model_buffer, need, &model), TL4_E_V4_CMAP);
     CHECK(model.classes == 0 && model.nprops == 0);
     tl4_model_test_between_passes = 0;
+    image[first_name_nul] = 0;                                                /* the terminator is back */
     CHECK_STATUS(tl4_model_build(&pe, &mui, model_buffer, need, &model), TL4_OK);
     /* mismatched buffers (MUST 7): too small fails cleanly, misaligned fails cleanly, larger is accepted */
     CHECK_STATUS(tl4_model_build(&pe, &mui, model_buffer, need - 8, &model), TL4_E_MODEL_SIZE);
