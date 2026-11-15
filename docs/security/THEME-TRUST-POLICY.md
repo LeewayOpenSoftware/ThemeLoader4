@@ -1,6 +1,6 @@
 # Theme trust policy
 
-Status: policy, version 2 (2026-11-15; version 2 after the review of the I1 design: T-LOAD-2, T-FAIL-1, T-GATE-2 to T-GATE-5). Owner: security review. Enforcement is designed in the integration milestone I1 and is not enabled before the gate in section 10 is met.
+Status: policy, version 3 (2026-11-15; version 2 after the review of the I1 design: T-LOAD-2, T-FAIL-1, T-GATE-2 to T-GATE-5; version 3 records the owner decision on T-SIG-4). Owner: security review. Enforcement is designed in the integration milestone I1 and is not enabled before the gate in section 10 is met.
 
 This file turns one owner decision into rules that code and tests can cite:
 
@@ -103,7 +103,7 @@ Installing is an administrator action (R-POL-1). Choosing among installed styles
 | T-SIG-1 | MUST: a signature or a hash match never replaces a check. It is not read by the parser, it relaxes no rule of sections 3 to 6 and no requirement of `REQUIREMENTS.md`. It answers one question only: may this style be placed in `Machine`. |
 | T-SIG-2 | MUST: every installed style has one origin mark, decided at install and recorded by the part of the store it is placed in and in the installer's log: **system** (the SHA-256 of each of its files is in the list shipped with the system release), **signed** (a valid signature by a publisher the machine policy names), **approved** (no such evidence; an administrator approved it for privileged processes by the explicit action of T-INST-8), **unsigned** (none of these). |
 | T-SIG-3 | MUST: `Machine` holds only styles marked system, signed or approved. Unsigned styles go to `Local`. |
-| T-SIG-4 | MUST: the machine policy is read from a machine-wide setting that ordinary principals cannot write, and has a built-in default used when the setting is absent or unreadable. Default: system styles go to `Machine`; signed styles go to `Machine` only for publishers the policy lists (none by default); approval by an administrator is allowed. An administrator can switch approval off, and then only system and listed publishers reach `Machine`. |
+| T-SIG-4 | MUST: the machine policy is read from a machine-wide setting that ordinary principals cannot write, and has a built-in default used when the setting is absent or unreadable. Default: system styles go to `Machine`; signed styles go to `Machine` only for publishers the policy lists (none by default); approval by an administrator is allowed (owner decision 2026-11-15: an administrator may approve an unsigned style, which then may enter `Machine` and be loaded by privileged processes, subject to every other rule of this file; a signing scheme is left for later). An administrator can switch approval off, and then only system and listed publishers reach `Machine`. |
 | T-SIG-5 | MUST: until a signature verifier exists in the system and has been reviewed, the mark "signed" is not used; the hash list (system) and the approval are the only ways into `Machine`. The signature that Windows appends to a style is not evidence of anything here and is never checked. |
 | T-SIG-6 | SHOULD: the approval action shows the administrator the file name, the SHA-256 and the plain statement that elevated programs will parse this file. |
 
@@ -161,4 +161,4 @@ Each is a negative test unless it says otherwise, and each cites the rule id.
 - HYPOTHESIS: the file system of the system volume and the enforcement of file and registry ACLs (T-STORE-6).
 - HYPOTHESIS: that a signature verifier usable for T-SIG-2 "signed" exists.
 - Not covered: wallpapers, cursors, sounds and icons in ordinary processes. Their parsers are outside this repository; T-PRIV-3 keeps privileged processes away from them.
-- For the owner: whether approval by an administrator (T-SIG-2, T-SIG-4) is wanted as the default, or whether `Machine` should hold system styles only until a signing scheme exists. The policy works with either; the default above is the one that lets the reference styles appear in elevated windows.
+- Decided by the owner on 2026-11-15: approval by an administrator (T-SIG-2, T-SIG-4) is the default. A signing scheme may replace or complement it later, by a commit here.
