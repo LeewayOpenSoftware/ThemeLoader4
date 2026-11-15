@@ -27,6 +27,7 @@ This is the single normative list for Theme Loader 4. A milestone is not accepte
 | R-GEN-8 | MUST: results are deterministic. The same bytes give the same accept/reject and the same model on every host and in both callers (install and load). No dependence on locale, time or uninitialised memory. |
 | R-GEN-9 | MUST: the core builds warning-free with `-Wall -Wextra -Wconversion` (and `/W4` on MSVC) and runs its tests under AddressSanitizer and UndefinedBehaviorSanitizer in CI. |
 | R-GEN-10 | MUST: one validator. Install-time checking and load-time checking call the same function with the same limits. |
+| R-GEN-11 | MUST: the input may change while it is parsed (a shared mapping of a file the user can write). No decision relies on two reads of the same input byte giving the same value. A value used for a bound is read once into a local. A second pass over the input checks every write against the sizes that were allocated from the first pass, before the write, or both passes run on a private copy made before the first. |
 
 ## 3. Bounded PE/resource reader (milestone L0)
 
@@ -125,8 +126,9 @@ Sections 1, 2 and 8 apply to `directui/` as they stand. Corpus figures are from 
 | Id | Requirement |
 |---|---|
 | R-DUI-1 | MUST: from the `shellstyle.dll` of a style, the only DirectUI input is the resource of type `UIFILE` with id 1. Resources of any other type (`SHELL32_UIFILE`, `EXPLORERFRAME_UIFILE`, `SYSTEMCPL_UIFILE`, `USERCPL_UIFILE`, anything else) are never read from a style. |
-| R-DUI-2 | MUST: a theme supplies style sheets only. The accepted document is `<duixml>` with `<stylesheets>` and `<style resid>` children; an element tree, `macro`, `bind` or any layout content in theme input is a reject. The entry point that loads theme sheets has no path that returns an element tree. |
-| R-DUI-3 | MUST: a theme sheet may set visual properties only. The parser keeps a fixed allow-list of property names (colours, fonts, backgrounds, borders, padding, margins, alignment, sizes); an assignment to any other property (for example `content`, `id`, `class`, `layout`, `tooltip`, `shortcut`, `accname`, `accRole`, `accdefaction`, `enabled`, `visible`) is dropped and counted. A theme must not be able to relabel, hide or re-wire trusted UI. |
+| R-DUI-2 | MUST: a theme supplies style sheets only. The accepted document is `<duixml>` with `<stylesheets>` and `<style resid>` children; an element tree, `macro`, `bind` or any layout content in theme input is a reject. The entry point that loads theme sheets has no path that returns an element tree. Text that is not white space is accepted in one place only: directly inside `<style>` or `<if>`, between rules, where it is ignored and counted (every stock sheet has a stray `\` there). Text inside a selector element, or directly inside `<duixml>` or `<stylesheets>`, is a reject. |
+| R-DUI-3 | MUST: a theme sheet may set visual properties only. The allow-list is fixed and exact, as measured on the stock sheets: `background`, `foreground`, `font`, `fontstyle`, `fontsize`, `fontweight`, `fontface`, `padding`, `margin`, `pressedpaddingshift`, `contentalign`, `height`, `width`, `minsize`, `borderthickness`, `bordercolor`, `borderstyle`, `transparent`. An assignment to any other property is dropped and counted by reason, never kept: text and accessibility (`content`, `tooltip`, `shortcut`, the `acc*` properties), identity and structure (`id`, `class`, `layout`, `layoutpos`, `sheet`), behaviour (`enabled`, `visible`, `cursor`), and everything unlisted, which includes `overhang`, `themesubapp` and the Explorer pane-sizer properties (`initialsize`, `reservedspace`, `explorervisibility`, `initialvisibility` and the like). A theme must not be able to relabel, hide, resize panes of or re-wire trusted UI. A name is added to the list only by a commit here, with the corpus evidence and the reason it is visual. |
+| R-DUI-3a | MUST: the size-bearing properties on the list (`height`, `width`, `minsize`, `padding`, `margin`, `borderthickness`, `pressedpaddingshift`, `fontsize`) take only non-negative lengths within R-DUI-12 (`pressedpaddingshift` may be negative within the same range); the integration clamps them again before layout (R-MOD-3). Recorded residual risk: with these properties a theme can still shrink an element to nothing or make text unreadable, as on Windows; an integration that shows security-relevant UI does not take its sizes from a theme sheet. |
 | R-DUI-4 | MUST: layout parsing exists for resources owned by the consuming binary and for tests. It is a separate entry point, and no integration may feed it bytes that come from a style. |
 
 ### 9.2 Input and XML subset
@@ -138,7 +140,7 @@ Sections 1, 2 and 8 apply to `directui/` as they stand. Corpus figures are from 
 | R-DUI-7 | MUST: accepted XML is elements, attributes, comments and text. A DOCTYPE, an entity declaration, a processing instruction (including the XML declaration), a CDATA section, or an entity reference other than the five predefined ones (`lt`, `gt`, `amp`, `quot`, `apos`) is a reject. No external resource is ever fetched. |
 | R-DUI-8 | MUST: the tokenizer and the tree builder are iterative with an explicit stack bounded by the depth limit (R-GEN-6). A close tag that does not match, a duplicate attribute on one element, content after the root, or an unterminated construct is a reject. |
 | R-DUI-9 | MUST: tag, attribute and function names are ASCII, start with a letter or `_`, and are folded with ordinal ASCII case folding only. Values are never folded. No locale-dependent comparison anywhere. |
-| R-DUI-10 | MUST: an unknown tag used as a selector, and an unknown attribute, are kept as opaque names within the limits and counted; they do not fail the parse. |
+| R-DUI-10 | MUST: an unknown tag used as a selector, and an unknown attribute, are kept as opaque names within the limits and counted; they do not fail the parse. The same holds for an unknown condition name in `<if>` or on a selector. An opaque condition is never guessed: a consumer that does not define the name evaluates it as false, so the rules under it do not apply. |
 
 ### 9.3 Value expressions
 
@@ -169,8 +171,11 @@ Sections 1, 2 and 8 apply to `directui/` as they stand. Corpus figures are from 
 | Attributes in total | `id` alone 7,516 over the corpus | 65,536 |
 | Name length (tag, attribute, function, resid) | not measured | 64 characters |
 | Attribute value length | not measured | 4,096 bytes |
-| Style sheets | 415 over the corpus | 512 |
-| Selectors + conditions | 2,152 + 9,084 over the corpus | 16,384 |
+| Style sheets | 415 over the corpus; 22 in one theme resource | 512 |
+| Selectors + conditions | 2,152 + 9,084 over the corpus; 634 rules + 544 conditions in one theme resource | 16,384 |
+| `<if>` scopes (theme sheets) | 537 in one theme resource | 4,096 |
+| Kept declarations (theme sheets) | 1,146 in one theme resource | 16,384 |
+| Value nodes in total (theme sheets) | 4,611 in one theme resource | 65,536 |
 | Expression nesting | not measured (shapes show 2 to 3) | 8 |
 | Arguments per call | 4 observed | 16 |
 | Expression nodes per value | not measured | 256 |
@@ -183,7 +188,6 @@ Sections 1, 2 and 8 apply to `directui/` as they stand. Corpus figures are from 
 - R-RES-3: the allowed IHDR set must be confirmed on the corpus (colour types and interlace actually used).
 - R-PE-8: strict ordering must be confirmed on the corpus by the L0 corpus run; if a reference style is unordered, the rule becomes "linear scan, first match" by commit here.
 - Record types 240, 241, 243 and the records with a non-zero reference on value types are dropped by R-V4-8 until the sketch explains them.
-- R-DUI-3: the allow-list of visual properties is fixed from the properties the stock style sheets actually set (D0 lists attribute names for layouts and sheets together); Stanley measures it on the corpus, sheets only, before D1 freezes the list.
 - R-DUI-6: whether any reference UIFILE holds bytes from 0x80 that are not UTF-8 (D0 says "UTF-8/ANSI"). If one does, the rule is revisited here.
 - R-DUI-7: whether any reference style sheet needs CDATA or a numeric character reference.
 - Section 9.5: the rows marked "not measured" are set with headroom from the shapes in D0; the D1 corpus runner reports the real maxima and the limits are then confirmed or tightened by commit.
