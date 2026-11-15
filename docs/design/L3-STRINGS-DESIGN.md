@@ -80,9 +80,12 @@ tl4_status tl4_strings_get2(const tl4_strings *s, uint32_t id, uint16_t *out, ui
   the same check at install and at load). Cost: O(total table bytes), 668 bytes × 61 blocks at most in the corpus.
 - **Lookup is bounded and direct**: block id from the string id, one binary search through the reader (R-V4-14), one
   pass over at most 16 length prefixes.
-- **The language policy (R-RES-1)**: the core never chooses a file. The consumer opens exactly one strings module per
-  style, the file at `<style dir>\<language>\<style name>.mui` for a language it decides (the adapter: the user's UI
-  language, falling back to `en-US`; the corpus runner: `en-US`), through the same reader and the same policy as the
+- **The language policy (R-RES-1)**: the core never chooses a file. The consumer opens at most one strings module per
+  style, the file at `<part>\<name>\<language>\<name>.msstyles.mui` of the fixed store layout (policy T-STORE-3), for a
+  language it decides once (the adapter: the user's UI language, falling back to `en-US`; the corpus runner: `en-US`);
+  the language directory name must satisfy T-STORE-4 (`[a-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}`) *before* it is put into a
+  path, and a name that does not selects no module (review MUST 6, 2026-11-15; this is consumer work, I1). It is opened
+  through the same reader and the same policy as the
   style itself (R-POL-1/2: a protected location, mapped read-only from its own handle). A style that carries an inline
   table is served from it first; the `.mui` answers only ids the inline table does not have (the L2 order). Both must
   pass `tl4_strings_check`. No `LoadLibraryEx`, no `LoadString`, no MUI fallback list (SOURCE for what is avoided:
@@ -140,6 +143,9 @@ tl4_status tl4_strings_get2(const tl4_strings *s, uint32_t id, uint16_t *out, ui
 1. Windows' source for colour/size display names and tooltips in a version-4 style (HYPOTHESIS; vsprobe can measure
    `EnumThemeColors` on the host once the controlled environment exists).
 2. Which `.mui` language the adapter picks when the user's language is absent (en-US fallback is the proposal).
+3. Whether the 70 entries of the shipped version-3 style pass the exact shape check is NOT VERIFIED until the
+   `tl4_loader_test_shipped` run on libernt-srv says so (those blocks come from our own resource compiler, not from the
+   corpus); if one has padding after the 16th string, Jim 2 rules before anything is loosened.
 
 ## 8. Evidence
 
@@ -176,6 +182,16 @@ compatibility check the owner asked for) must read a table that has several lang
 - **One new reader entry point**, `tl4_pe_find_language(pe, type, name, language, out)`: the leaf header check of
   `tl4_pe_find`, then a scan of at most `TL4_PE_MAX_LANGUAGES` (64) ascending entries that stops at the first id above
   the wanted one; bounded (R-V4-14), re-checked (R-GEN-11).
+- **No code unit 0 inside a string** (review MUST 1): the check rejects the block, and the getter checks its copy
+  again, because the getter ends the copy with a 0 and an embedded one would give two lengths for one string. The
+  corpus has none.
+- **A lookup does not rely on the validation** (review MUST 2, R-GEN-11): it takes the block range from the resource
+  reader again, bounds the block (at most 32,800 bytes) and every count it passes against that range, and uses each
+  count from one read. A count that does not fit, before or at the wanted string, is `TL4_E_STR_BLOCK`, never a
+  wrong string. On every failure the outputs are cleared: offset, chars, the statistics, and the first unit of the
+  buffer; a capacity of 0 is `TL4_E_BUFFER`, the capacity needed is chars + 1 (review MUST 4). A language value that
+  is neither `TL4_STR_LANG_LOWEST` nor 0..65,535 is `TL4_E_ARG`, not "not found" (review MUST 5). In `get2` only
+  `TL4_E_NOT_FOUND` from the style goes on to the module; any other status is returned (review MUST 3).
 
 ### 9.2 Signatures (replacing the three of 3.1)
 
@@ -190,6 +206,9 @@ tl4_status tl4_pe_find_language(const tl4_pe *pe, const tl4_res_name *type, cons
 
 ### 9.3 Tests and fuzzing added
 
+- Generated: the changed-bytes case covers the wanted string and a count *before* it (review MUST 2); a code unit 0
+  written after the check is refused by the getter (MUST 1); the review's limit test is the largest table that fits a
+  file the reader accepts (32 MiB: about 1,020 full blocks), not 4,096 full blocks (134 MB).
 - Generated: a block with two languages (1031 then 1033) where the same id has different text per language:
   `LOWEST` returns the 1031 text, explicit 1033 the other, explicit 1034 `TL4_E_NOT_FOUND`; the same block with the
   second language's table malformed (length past the end) rejects the whole module while the first language alone
