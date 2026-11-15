@@ -54,6 +54,14 @@ if(TL4_BUILD_TESTS)
     endif()
 
     # Seeds for the fuzzers, written where the CI smoke run looks for them: <build>/loader/fuzz/seeds/<harness>
+    # The query list for the Windows reference probe (tools/vsprobe): class names and ids of a style's model, no values
+    add_executable(tl4_loader_querylist tools/querylist.c)
+    target_link_libraries(tl4_loader_querylist PRIVATE tl4_loader_core)
+    tl4_warnings(tl4_loader_querylist)
+    if(MSVC)
+        target_compile_definitions(tl4_loader_querylist PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+
     add_executable(tl4_loader_mkseeds fuzz/mkseeds.c)
     target_link_libraries(tl4_loader_mkseeds PRIVATE tl4_loader_fixtures)
     tl4_warnings(tl4_loader_mkseeds)
