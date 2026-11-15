@@ -1,0 +1,26 @@
+<Configuration>
+  <!-- Windows Sandbox for the TL4 reference probe: the host is untouched; the sandbox is discarded on close.
+       Input is read-only (the probe, the query list, the run script); only the output folder is writable.
+       Replace the two HostFolder paths with the Lab01 locations before use. -->
+  <Networking>Disable</Networking>
+  <ClipboardRedirection>Disable</ClipboardRedirection>
+  <PrinterRedirection>Disable</PrinterRedirection>
+  <AudioInput>Disable</AudioInput>
+  <VideoInput>Disable</VideoInput>
+  <ProtectedClient>Enable</ProtectedClient>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\LAB01\vsprobe\in</HostFolder>
+      <SandboxFolder>C:\probe\in</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>C:\LAB01\vsprobe\out</HostFolder>
+      <SandboxFolder>C:\probe\out</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>cmd.exe /c C:\probe\in\run-probe.cmd</Command>
+  </LogonCommand>
+</Configuration>
