@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef DUI_TESTING
+#error "this test needs the DUI_TESTING build of the core (tl4_directui_core_testing)"
+#endif
 #include <tl4/directui/dui_theme.h>
 
 /* Test hook in dui_sheet.c (R-GEN-11): called between the two passes. */

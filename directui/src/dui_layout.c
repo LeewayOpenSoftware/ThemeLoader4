@@ -16,7 +16,10 @@
 #include <tl4/directui/dui_xml.h>
 
 /* Test hook (R-GEN-11 test): called between the passes with the caller's buffer. */
+#ifdef DUI_TESTING
+/* Only in the test build of the core: a shipped core has no writable hook. */
 void (*dui_layout_test_between_passes)(const uint8_t *data, size_t size);
+#endif
 
 typedef struct layout_builder
 {
@@ -120,8 +123,10 @@ dui_layout_load(const uint8_t *data, size_t size, dui_layout *out, size_t *error
     st = dui_xml_parse(data, size, layout_sink, &count, NULL, error_offset);
     if (st != DUI_OK)
         return st;
+#ifdef DUI_TESTING
     if (dui_layout_test_between_passes)
         dui_layout_test_between_passes(data, size);
+#endif
 
     out->input = malloc(size);
     out->elements = calloc(count.elements ? count.elements : 1, sizeof(dui_element));
