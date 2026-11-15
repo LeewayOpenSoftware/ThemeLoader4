@@ -293,6 +293,31 @@ static void test_unsorted_builder(void)
     CHECK_STATUS(tl4_pe_open(image, n, &pe), TL4_E_RSRC_ORDER);
 }
 
+/* review MUST 3 end to end: a style whose packer stored a lower-case name cannot be reached by any query */
+static void test_lowercase_stored_name(void)
+{
+    pb_res res[] = {
+        {"cmap", 0, "cmap", 0, 0, cmap, sizeof(cmap)},
+        {"PACKTHEM_VERSION", 0, NULL, 1, 0, version4, 2},
+    };
+    pb_options o = {1, 0, 0, 0};
+    tl4_pe pe;
+    tl4_resource r;
+    tl4_res_name t, nm;
+    uint32_t cnt = 9;
+    size_t n = pb_build(res, 2, &o, image, sizeof(image), NULL);
+    CHECK(n > 0);
+    CHECK_STATUS(tl4_pe_open(image, n, &pe), TL4_OK);   /* the file itself is well formed */
+    t = tl4_res_ascii("cmap"); nm = tl4_res_ascii("cmap");
+    CHECK_STATUS(tl4_pe_find(&pe, &t, &nm, &r), TL4_E_NOT_FOUND);
+    t = tl4_res_ascii("CMAP"); nm = tl4_res_ascii("CMAP");
+    CHECK_STATUS(tl4_pe_find(&pe, &t, &nm, &r), TL4_E_NOT_FOUND);
+    CHECK_STATUS(tl4_pe_count_type(&pe, &t, &cnt), TL4_OK);
+    CHECK(cnt == 0);
+    t = tl4_res_ascii("packthem_version"); nm = tl4_res_id(1);
+    CHECK_STATUS(tl4_pe_find(&pe, &t, &nm, &r), TL4_OK);
+}
+
 static void test_variants(void)
 {
     pb_options o = {0, 0x4000, 3, 0};
@@ -311,7 +336,7 @@ static void test_variants(void)
 static void test_names(void)
 {
     tl4_res_name a = tl4_res_ascii("Image"), b = tl4_res_ascii("IMAGE"), c = tl4_res_ascii("IMAGES"), d = tl4_res_id(2);
-    uint8_t u[] = {'i', 0, 'm', 0, 'a', 0, 'g', 0, 'e', 0};
+    uint8_t u[] = {'I', 0, 'M', 0, 'A', 0, 'G', 0, 'E', 0};   /* stored names are upper case */
     tl4_res_name e = {0};
     e.kind = TL4_NAME_UTF16; e.length = 5; e.utf16 = u;
     CHECK(tl4_res_name_equal(&a, &b));
@@ -319,6 +344,17 @@ static void test_names(void)
     CHECK(!tl4_res_name_equal(&a, &d));
     CHECK(tl4_res_name_equal(&a, &e) && tl4_res_name_equal(&e, &b));
     CHECK(!tl4_res_name_equal(&c, &e));
+    {
+        /* a stored name is compared exactly: a lower-case stored name matches no query (review MUST 3) */
+        uint8_t low[] = {'c', 0, 'm', 0, 'a', 0, 'p', 0};
+        uint8_t up[] = {'C', 0, 'M', 0, 'A', 0, 'P', 0};
+        tl4_res_name stored_low = {0}, stored_up = {0}, q1 = tl4_res_ascii("cmap"), q2 = tl4_res_ascii("CMAP");
+        stored_low.kind = TL4_NAME_UTF16; stored_low.length = 4; stored_low.utf16 = low;
+        stored_up.kind = TL4_NAME_UTF16; stored_up.length = 4; stored_up.utf16 = up;
+        CHECK(tl4_res_name_equal(&q1, &stored_up) && tl4_res_name_equal(&q2, &stored_up));
+        CHECK(!tl4_res_name_equal(&q1, &stored_low) && !tl4_res_name_equal(&q2, &stored_low));
+        CHECK(!tl4_res_name_equal(&stored_low, &stored_up) && tl4_res_name_equal(&stored_up, &stored_up));
+    }
     CHECK(!tl4_res_name_equal(&d, &e));
     CHECK(tl4_res_name_equal(&d, &d));
     {
@@ -345,6 +381,7 @@ int main(void)
     test_failed_open_clears();
     test_corruptions();
     test_unsorted_builder();
+    test_lowercase_stored_name();
     test_variants();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

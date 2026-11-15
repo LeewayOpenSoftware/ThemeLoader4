@@ -100,11 +100,12 @@ static uint32_t fold(uint32_t c)
     return (c >= 'a' && c <= 'z') ? c - 32u : c;
 }
 
+/* A stored name's code unit is taken as is; a caller's query character is folded to upper case. */
 static uint32_t name_char(const tl4_res_name *n, uint32_t i)
 {
     if (n->kind == TL4_NAME_UTF16)
         return (uint32_t)n->utf16[2 * i] | ((uint32_t)n->utf16[2 * i + 1] << 8);
-    return (uint32_t)(unsigned char)n->ascii[i];
+    return fold((uint32_t)(unsigned char)n->ascii[i]);
 }
 
 int tl4_res_name_equal(const tl4_res_name *a, const tl4_res_name *b)
@@ -117,7 +118,7 @@ int tl4_res_name_equal(const tl4_res_name *a, const tl4_res_name *b)
     if ((a->kind == TL4_NAME_UTF16 && !a->utf16) || (a->kind == TL4_NAME_ASCII && !a->ascii)) return 0;
     if ((b->kind == TL4_NAME_UTF16 && !b->utf16) || (b->kind == TL4_NAME_ASCII && !b->ascii)) return 0;
     for (i = 0; i < a->length; i++)
-        if (fold(name_char(a, i)) != fold(name_char(b, i))) return 0;
+        if (name_char(a, i) != name_char(b, i)) return 0;
     return 1;
 }
 

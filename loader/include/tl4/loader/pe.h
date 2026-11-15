@@ -57,7 +57,7 @@ typedef struct tl4_pe {
 enum tl4_name_kind {
     TL4_NAME_ID = 0,      /* a 16-bit ordinal, as MAKEINTRESOURCE */
     TL4_NAME_UTF16 = 1,   /* a UTF-16LE string of `length` code units inside the image, not terminated */
-    TL4_NAME_ASCII = 2    /* a caller string, compared with UTF-16 names by ordinal ASCII case folding */
+    TL4_NAME_ASCII = 2    /* a caller query: folded to upper case (ASCII only) and compared exactly with stored names */
 };
 
 typedef struct tl4_res_name {
@@ -83,7 +83,10 @@ typedef struct tl4_resource {
 tl4_res_name tl4_res_id(uint32_t id);
 /* A caller string longer than TL4_PE_MAX_NAME_CHARS yields a name that matches nothing. */
 tl4_res_name tl4_res_ascii(const char *ascii);
-/* ids equal by value; strings equal by ordinal ASCII case folding; an id never equals a string (R-DUI-9 style) */
+/* ids equal by value; an id never equals a string. Stored (UTF-16) names are compared exactly, code unit by code
+ * unit; only a caller's ASCII query is folded to upper case before the comparison, because resource names are stored
+ * upper case by the resource compiler (VERIFIED on every input file) and a stored lower-case name must stay
+ * unreachable rather than ambiguous (review MUST 3). Two queries are compared folded. */
 int tl4_res_name_equal(const tl4_res_name *a, const tl4_res_name *b);
 
 /* Validate the headers and the whole resource tree. On success every later call only re-walks validated memory. */
