@@ -80,6 +80,7 @@ struct expected {
     unsigned long partstates, dup_props, dup_names, model_bytes;   /* the model's columns (L2) */
     unsigned long unresolved_bp;   /* unresolved references in basis points of the records (R-V4-12 allows 100) */
     unsigned long images_ok, max_pixels, max_idat, pixels_total;   /* the chunk walker's columns (L3) */
+    unsigned long range_rejected;  /* values the range function rejects, intended (section 6.1: 13 over the corpus) */
     char name[128];
     char expect[32];     /* "ok" or the status name the validator must return */
 };
@@ -96,10 +97,11 @@ static int load_expected(const char *path)
     {
         struct expected *e = &table[ntable];
         if (line[0] == '#' || line[0] == 's' || line[0] == '\n' || ntable >= 128) continue;
-        if (sscanf(line, "%64[0-9a-f],%lu,%127[^,],%31[^,],%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu", e->sha, &e->size, e->name, e->expect,
+        e->range_rejected = 0;
+        if (sscanf(line, "%64[0-9a-f],%lu,%127[^,],%31[^,],%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu", e->sha, &e->size, e->name, e->expect,
                    &e->version, &e->cmap, &e->bcmap, &e->records, &e->rmap, &e->images, &e->streams, &e->blocks,
                    &e->partstates, &e->dup_props, &e->dup_names, &e->model_bytes, &e->unresolved_bp,
-                   &e->images_ok, &e->max_pixels, &e->max_idat, &e->pixels_total) == 21)
+                   &e->images_ok, &e->max_pixels, &e->max_idat, &e->pixels_total, &e->range_rejected) >= 21)
             ntable++;
     }
     fclose(f);
@@ -255,6 +257,7 @@ static void check_file(const char *path, const char *name, struct totals *t)
     else
     {
         int bad = 0;
+        unsigned long range_rejected_here = 0;
         tl4_model model;
         size_t need = tl4_model_size(&s);
         memset(&model, 0, sizeof(model));
@@ -316,8 +319,9 @@ static void check_file(const char *path, const char *name, struct totals *t)
                     range_note_reject(p->type, p->name_id, (unsigned)row, offending);
                 }
             }
-            printf("%-36s range: %u properties checked, %u rejected, %u getter errors\n", "", chk, rej, errs);
+            printf("%-36s range: %u properties checked, %u rejected, %u getter errors\n", name, chk, rej, errs);
             t->range_checked += chk; t->range_rejected += rej; t->range_errors += errs;
+            range_rejected_here = rej;
         }
         if (e)
         {
@@ -328,7 +332,8 @@ static void check_file(const char *path, const char *name, struct totals *t)
                    e->partstates != model.counts.partstates || e->dup_props != model.counts.duplicate_props ||
                    e->dup_names != model.counts.duplicate_names || e->model_bytes != (unsigned long)need ||
                    e->unresolved_bp != unresolved_bp || model.counts.unresolved != unresolved ||
-                   e->images_ok != w.ok || e->max_pixels != w.max_pixels || e->max_idat != w.max_idat || e->pixels_total != w.pixels_total);
+                   e->images_ok != w.ok || e->max_pixels != w.max_pixels || e->max_idat != w.max_idat || e->pixels_total != w.pixels_total ||
+                   e->range_rejected != range_rejected_here);
             if (bad) t->mismatched++; else t->ok++;
         }
         else

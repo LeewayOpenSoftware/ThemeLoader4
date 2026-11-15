@@ -19,9 +19,12 @@ static int failures = 0, checks = 0;
 /* Section 6.1 as written, transcribed row by row with the numbers of vssym32.h. This is the oracle: a change here is a
  * change of the table and goes through its review. */
 static const uint32_t T_DIVISOR[] = { 2401 /* IMAGECOUNT */, 2426 /* FRAMESPERSECOND */ };
-static const uint32_t T_INDEX[] = { 2418 /* GLYPHINDEX */ };
+/* the index row names no property since the ruling 33bfd74 (GLYPHINDEX is a glyph, not an index) */
+static const uint32_t T_GLYPH[] = { 2418 /* GLYPHINDEX */ };
+static const uint32_t T_COLOR_INT[] = { 2431 /* COLORIZATIONCOLOR */ };
+static const uint32_t T_GLOW[] = { 2429 /* GLOWINTENSITY */ };
 static const uint32_t T_LEVEL[] = { 2402 /* ALPHALEVEL */, 2406, 2407, 2408, 2409, 2410 /* GRADIENTRATIO1..5 */, 2413 /* SATURATION */,
-                                    2415 /* ALPHATHRESHOLD */, 2429 /* GLOWINTENSITY */, 2430 /* OPACITY */, 2432 /* COLORIZATIONOPACITY */ };
+                                    2415 /* ALPHATHRESHOLD */, 2430 /* OPACITY */, 2432 /* COLORIZATIONOPACITY */ };
 static const uint32_t T_TIME[] = { 2428 /* ANIMATIONDELAY */, 5006 /* ANIMATIONDURATION */, 6000 /* TRANSITIONDURATIONS */ };
 static const uint32_t T_DPI[] = { 2420, 2421, 2422, 2423, 2424 /* MINDPI1..5 */, 2433 /* MINDPI6 */, 2434 /* MINDPI7 */ };
 static const uint32_t T_METRIC[] = { 1201, 1202, 1203, 1204, 1205, 1206, 1207, 1208, 1209, 1210 /* SIZINGBORDERWIDTH .. PADDEDBORDERWIDTH */ };
@@ -43,7 +46,10 @@ static void test_lists(void)
 {
     const uint32_t *ids = (const uint32_t *)1;
     check_list(TL4_RANGE_DIVISOR, T_DIVISOR, N(T_DIVISOR));
-    check_list(TL4_RANGE_INDEX, T_INDEX, N(T_INDEX));
+    CHECK(tl4_range_members(TL4_RANGE_INDEX, &ids) == 0 && ids == 0);      /* the row exists, with no named member */
+    check_list(TL4_RANGE_GLYPH, T_GLYPH, N(T_GLYPH));
+    check_list(TL4_RANGE_COLOR_INT, T_COLOR_INT, N(T_COLOR_INT));
+    check_list(TL4_RANGE_GLOW, T_GLOW, N(T_GLOW));
     check_list(TL4_RANGE_LEVEL, T_LEVEL, N(T_LEVEL));
     check_list(TL4_RANGE_TIME, T_TIME, N(T_TIME));
     check_list(TL4_RANGE_DPI, T_DPI, N(T_DPI));
@@ -55,8 +61,8 @@ static void test_lists(void)
         const uint32_t *a, *b;
         uint32_t na, nb, i, j;
         enum tl4_range_row ra, rb;
-        for (ra = TL4_RANGE_DIVISOR; ra <= TL4_RANGE_METRIC; ra++)
-            for (rb = ra + 1; rb <= TL4_RANGE_METRIC; rb++)
+        for (ra = TL4_RANGE_DIVISOR; ra < TL4_RANGE_NEVER; ra++)
+            for (rb = ra + 1; rb < TL4_RANGE_NEVER; rb++)
             {
                 na = tl4_range_members(ra, &a); nb = tl4_range_members(rb, &b);
                 for (i = 0; i < na; i++) for (j = 0; j < nb; j++) CHECK(a[i] != b[j]);
@@ -75,6 +81,10 @@ static void test_rows(void)
     CHECK(tl4_range_row(TL4_V4_INTLIST, 6000) == TL4_RANGE_TIME);       /* TRANSITIONDURATIONS: the property row wins */
     CHECK(tl4_range_row(TL4_V4_INT, 1201) == TL4_RANGE_METRIC);         /* narrower than the pixel row */
     CHECK(tl4_range_row(TL4_V4_INT, 2401) == TL4_RANGE_DIVISOR);
+    CHECK(tl4_range_row(TL4_V4_INT, 2418) == TL4_RANGE_GLYPH);
+    CHECK(tl4_range_row(TL4_V4_INT, 2431) == TL4_RANGE_COLOR_INT);
+    CHECK(tl4_range_row(TL4_V4_INT, 2429) == TL4_RANGE_GLOW);
+    CHECK(tl4_range_row(TL4_V4_INT, 2402) == TL4_RANGE_LEVEL);
     CHECK(tl4_range_row(TL4_V4_BOOL, 2401) == TL4_RANGE_DIVISOR);       /* a property row wins over any type row */
     CHECK(tl4_range_row(TL4_V4_BOOL, 2201) == TL4_RANGE_BOOL);
     CHECK(tl4_range_row(TL4_V4_ENUM, 4001) == TL4_RANGE_ENUM);
@@ -112,8 +122,19 @@ static void test_values(void)
     boundary(TL4_V4_SIZE, 2411, -8192, 8192);
     boundary(TL4_V4_INT, 2401, 1, 256);
     boundary(TL4_V4_INT, 2426, 1, 256);
-    boundary(TL4_V4_INT, 2418, 0, 255);
     boundary(TL4_V4_INT, 2402, 0, 255);
+    boundary(TL4_V4_INT, 2429, 0, 1024);
+    {
+        int32_t g;
+        g = -1; CHECK_STATUS(tl4_range_check(TL4_V4_INT, 2418, &g, 1), TL4_E_RANGE);
+        g = 0; CHECK_STATUS(tl4_range_check(TL4_V4_INT, 2418, &g, 1), TL4_OK);
+        g = 9679; CHECK_STATUS(tl4_range_check(TL4_V4_INT, 2418, &g, 1), TL4_OK);          /* the corpus value, U+25CF */
+        g = 65535; CHECK_STATUS(tl4_range_check(TL4_V4_INT, 2418, &g, 1), TL4_OK);
+        g = 65536; CHECK_STATUS(tl4_range_check(TL4_V4_INT, 2418, &g, 1), TL4_E_RANGE);
+        g = INT32_MIN; CHECK_STATUS(tl4_range_check(TL4_V4_INT, 2431, &g, 1), TL4_OK);      /* a colour as INT: any value */
+        g = -16777216; CHECK_STATUS(tl4_range_check(TL4_V4_INT, 2431, &g, 1), TL4_OK);
+        g = INT32_MAX; CHECK_STATUS(tl4_range_check(TL4_V4_INT, 2431, &g, 1), TL4_OK);
+    }
     boundary(TL4_V4_INT, 2430, 0, 255);
     boundary(TL4_V4_INT, 2428, 0, 65535);
     boundary(TL4_V4_INT, 5006, 0, 65535);
