@@ -1,6 +1,6 @@
 # S1: fuzz campaign plan
 
-Status: design. Owner: security review. Normative text is `REQUIREMENTS.md`; this file says how S1 tests it.
+Status: the campaign of this plan is cancelled (owner decision 2026-11-15) and no `S1-REPORT.md` will be written. The gate is `BOUNDED-VALIDATION.md`. Sections 3 and 4 stay as the reference for the promises that the harnesses check; everything about phases, CPU-hours and the report is void. Owner: security review. Normative text is `REQUIREMENTS.md`; this file says how S1 tests it.
 
 S1 is the gate of R-PROC-3 (no L2 before the S1 report) and R-DUI-18 (D1 is not used on files we did not build before its campaign report and review are closed). Its result is `docs/security/S1-REPORT.md`.
 

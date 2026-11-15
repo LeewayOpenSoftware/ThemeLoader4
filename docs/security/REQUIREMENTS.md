@@ -150,7 +150,7 @@ A property that is in more than one row (a count that is also an `INT`) takes th
 |---|---|
 | R-PROC-1 | MUST: no Microsoft or third-party theme asset, and nothing extracted from one, enters the repository, a fixture, a fuzz seed or a crash artefact that is committed. Seeds are generated. A crashing input found on the reference corpus is reduced to a generated reproducer before it is committed. |
 | R-PROC-2 | MUST: every fuzz finding gets a regression test that cites the requirement id it violated. |
-| R-PROC-3 | MUST: L1 does not start before the L0 review is closed, L2 not before the S1 campaign report, integration not before S2, with this reading for I1 (owner decision 2026-11-15: design and initial implementation may start now, validation before production use): after the I1 design review is closed, I1 code may be merged compiled out by default; the build option is turned on only in lab builds and only after the S1 report; the version-4 path is switched on outside the lab only after S2 is closed, the R-MOD-7 table is in this file and T-GATE-1 of the trust policy is met. For DirectUI, see R-DUI-18. |
+| R-PROC-3 | MUST: L1 does not start before the L0 review is closed, and each later milestone not before the review of the one before it is closed. Security validation of the parsers is the bounded check of `docs/security/BOUNDED-VALIDATION.md` (owner decision 2026-11-15: it replaces the fuzz campaigns S1 and S2; a check has an objective, a budget and a stop rule, and run counts are not a result). Reading for I1 (owner decision 2026-11-15: design and initial implementation may start now, validation before production use): after the I1 design review is closed, I1 code may be merged compiled out by default; the build option is turned on only in lab builds; the version-4 path is switched on outside the lab only when the bounded check passed on the release candidate that is vendored, the table of section 6.1 is in this file and T-GATE-1 of the trust policy is met. For DirectUI, see R-DUI-18. |
 | R-PROC-4 | SHOULD: each requirement in sections 3 to 5 has at least one negative test (an input that must be rejected for that reason alone). |
 
 ## 9. DirectUI: UIFILE parser and style sheets (milestone D1)
@@ -194,7 +194,7 @@ Sections 1, 2 and 8 apply to `directui/` as they stand. Corpus figures are from 
 | Id | Requirement |
 |---|---|
 | R-DUI-17 | MUST: libFuzzer harnesses for the XML tokenizer and for the expression parser exist in the same commits as those modules, build with ASan + UBSan, and run in CI on generated seeds (R-PROC-1). |
-| R-DUI-18 | MUST: D1 is not used on files not built by us before its fuzz campaign report and security review are closed. |
+| R-DUI-18 | MUST: D1 is not used on files not built by us before the DirectUI parsers have a row in `docs/security/BOUNDED-VALIDATION.md`, that row passed on the release candidate, and the security review of D1 is closed. |
 
 ### 9.5 Limits (per UIFILE resource)
 

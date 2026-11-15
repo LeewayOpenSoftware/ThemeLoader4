@@ -42,8 +42,7 @@ Implementation, integration and security testing are separate milestones.
 
 **Security testing**
 
-- **S1**: fuzzing campaign on L0–L1 plus a Jim 2 review.
-- **S2**: the same for L2–L3, including the image and string paths.
+- Bounded validation per release candidate (`docs/security/BOUNDED-VALIDATION.md`): an objective, a budget and a stop rule per parser, plus a Jim 2 review of the diff. It replaces the fuzz campaigns S1 and S2 (owner decision 2026-11-15).
 
 **DirectUI**
 
