@@ -1,6 +1,6 @@
 # Theme trust policy
 
-Status: policy, version 1 (2026-11-15). Owner: security review. Enforcement is designed in the integration milestone I1 and is not enabled before the gate in section 10 is met.
+Status: policy, version 2 (2026-11-15; version 2 after the review of the I1 design: T-LOAD-2, T-FAIL-1, T-GATE-2 to T-GATE-5). Owner: security review. Enforcement is designed in the integration milestone I1 and is not enabled before the gate in section 10 is met.
 
 This file turns one owner decision into rules that code and tests can cite:
 
@@ -58,7 +58,7 @@ These hold for ordinary and privileged processes alike. They are the load side o
 | Id | Rule |
 |---|---|
 | T-LOAD-1 | MUST: the per-user setting selects a style **by name only** (T-STORE-4), plus a colour and a size name under the same rule. The loader builds the path itself from the store root, the part and the names. A setting that holds a path, an environment reference or anything that does not match the name rule selects nothing. For the settings that exist today (`DllName` with a full path), the value is accepted only when, taken as text and without expanding anything, it is exactly a path the loader would have built; otherwise it selects nothing. |
-| T-LOAD-2 | MUST: the file is opened once, read-only, without following a reparse point on the last component, with a share mode that denies writing and deleting. Every later step uses that handle: the checks, the size, and the mapping (R-POL-2). No step opens the path a second time. |
+| T-LOAD-2 | MUST: the file is opened once, read-only, without following a reparse point on the last component, with a share mode that denies writing and deleting. Every later step uses that handle: the checks, the size, and the mapping (R-POL-2). No step opens the path a second time. One exception while the version-3 loader is in service: when the checks of T-LOAD-3 passed on the handle and the bounded reader found version 3, the version-3 loader may open the same path once more with its existing data-file load. The exception rests on the location not being user-writable, so it does not exist where T-GATE-4 switched the checks off. |
 | T-LOAD-3 | MUST, on the handle and before any byte of the file is parsed: it is a regular disk file; the final path of the handle equals the path the loader built; no component is a reparse point; the volume is local and fixed and stores security descriptors; the location is not user-writable (T-DEF-2), checked on the file through the handle and on each directory. Any failure is a reject. |
 | T-LOAD-4 | MUST: the file is mapped as data, read-only, never as an image that can run and never through a library load that runs code or applies relocations. The mapped size is the size that was checked. |
 | T-LOAD-5 | MUST: the style is validated again in the loading process on every load (R-GEN-10). The store, the installer's validation and the origin mark relax nothing in the parser. |
@@ -113,7 +113,7 @@ Why approval exists: the styles the owner wants to use are third-party files wit
 
 | Id | Rule |
 |---|---|
-| T-FAIL-1 | MUST: when any rule of sections 2 to 5 or any validation fails, the process uses the machine default style when that one passes the same rules, and otherwise the built-in unthemed look. It never uses part of the refused style, never tries a second per-user choice, and never retries the same style in the same process run. |
+| T-FAIL-1 | MUST: when any rule of sections 2 to 5 or any validation fails, the process uses the built-in unthemed look, or the machine default style when that one passes the same rules. It never uses part of the refused style, never tries a second per-user choice, and never retries the same style in the same process run. |
 | T-FAIL-2 | MUST: a refusal changes nothing outside the process: no setting is rewritten, no file is touched (R-GEN-5, R-POL-4). |
 | T-FAIL-3 | MUST: "unknown" is a refusal. A check that cannot be made (the security descriptor cannot be read, the volume type cannot be told, the token cannot be queried) counts as failed, and for T-DEF-4 as privileged. |
 | T-FAIL-4 | MUST: the version-3 loader and the version-4 loader are behind the same checks of sections 4 and 5. A style that the version-4 path refuses is not handed to the version-3 path, and the other way round. |
@@ -136,8 +136,10 @@ This is R-POL-5 made precise. Its purpose is that a style that crashes a process
 | Id | Rule |
 |---|---|
 | T-GATE-1 | MUST: no privileged process uses the version-4 loader before all of these are true: the S1 and S2 campaign reports are written and their findings closed (R-PROC-3); the enforcement code of sections 2 to 9 was reviewed by the security reviewer; the tests of section 11 pass on the build that ships; I1 has stated with evidence how the system volume stores and enforces ACLs. |
-| T-GATE-2 | MUST: until then the integration keeps privileged processes on the version-3 path or the built-in look, and the version-3 path gets at least T-LOAD-1, T-LOAD-3 and T-PRIV-1 before it is called "meeting the owner decision". |
-| T-GATE-3 | MUST: enabling is a switch that an administrator can turn back (rollback), stored where ordinary principals cannot write. |
+| T-GATE-2 | MUST: until then the integration keeps privileged processes on the version-3 path or the built-in look. The version-3 path gets T-LOAD-1, T-LOAD-3, the crash guard of section 9 and, in privileged processes, section 5, in front of its first read of the file. |
+| T-GATE-3 | MUST: enabling the version-4 path is a switch that an administrator can turn back (rollback), stored where ordinary principals cannot write. Ordinary and privileged processes have separate switches; the one for privileged processes is off until T-GATE-1 is met. |
+| T-GATE-4 | MUST: the checks in front of the version-3 loader do not depend on the build option or the switch of the version-4 path: a build without version 4 still has them. For ordinary processes only, a machine-wide setting that ordinary principals cannot write may put the version-3 path back to its old behaviour (any path) as a rollback. Default: the checks are on. The setting never applies to a privileged process, each such load is logged, and the setting is removed when the installer of section 6 ships. |
+| T-GATE-5 | MUST: no shipped binary has a way around these rules for tests. A test that needs a style puts it into the store the way an administrator would, or uses a test build that is never shipped. |
 
 ## 11. Tests the enforcement must have
 
