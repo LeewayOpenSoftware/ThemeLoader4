@@ -1,0 +1,1 @@
+<duixml><stylesheets><style resid='s'><if id='atom(A)'><element background='argb(255,0,0,0)'/></if><Button font='gtf(TEXTSTYLE, 4, 0)' padding='rect(1rp,2rp,3rp,4rp)'/></style></stylesheets></duixml>

@@ -32,7 +32,8 @@ jobs:
             [ -x "$f" ] || continue
             name="$(basename "$f")"
             dir="$(find . -path "*/fuzz/seeds/${name#fuzz_}" -type d | head -n 1)"
-            "$f" -runs=20000 -max_len=65536 ${dir:+"$dir"}
+            work="$(mktemp -d)"
+            "$f" -runs=20000 -max_len=65536 "$work" ${dir:+"$dir"}
           done
 
   windows:
