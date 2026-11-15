@@ -70,8 +70,6 @@ static uint32_t crc32_update(uint32_t crc, const uint8_t *p, uint32_t n)
 
 #define FOURCC(a, b, c, d) (((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | ((uint32_t)(c) << 8) | (uint32_t)(d))
 #define T_IHDR FOURCC('I', 'H', 'D', 'R')
-#define T_PLTE FOURCC('P', 'L', 'T', 'E')
-#define T_TRNS FOURCC('t', 'R', 'N', 'S')
 #define T_IDAT FOURCC('I', 'D', 'A', 'T')
 #define T_IEND FOURCC('I', 'E', 'N', 'D')
 #define T_GAMA FOURCC('g', 'A', 'M', 'A')
@@ -79,21 +77,25 @@ static uint32_t crc32_update(uint32_t crc, const uint8_t *p, uint32_t n)
 #define T_SRGB FOURCC('s', 'R', 'G', 'B')
 #define T_TEXT FOURCC('t', 'E', 'X', 't')
 
-/* The ancillary allow-list (design note section 5, proposed R-RES-3 amendment): one table, exact or bounded lengths,
- * each type at most once and only before the first IDAT, never interpreted. */
-struct ancillary { uint32_t type; uint32_t min_len, max_len; };
+/* The ancillary allow-list (R-RES-3 as ruled 2026-11-15): one table, exact or bounded lengths, a value range checked
+ * by `shape`, each type at most once and only before the first IDAT, never interpreted. */
+struct ancillary { uint32_t type; uint32_t min_len, max_len; int (*shape)(const uint8_t *p, uint32_t n); };
+static int gama_shape_ok(const uint8_t *p, uint32_t n) { return n == 4 && (p[0] | p[1] | p[2] | p[3]) != 0; }   /* gamma != 0 */
+static int phys_shape_ok(const uint8_t *p, uint32_t n) { return n == 9 && p[8] <= 1; }                       /* unit 0 or 1 */
+static int srgb_shape_ok(const uint8_t *p, uint32_t n) { return n == 1 && p[0] <= 3; }                       /* rendering intent */
+static int text_shape_ok(const uint8_t *p, uint32_t n);
 static const struct ancillary allowed_ancillary[] = {
-    { T_GAMA, 4, 4 },
-    { T_PHYS, 9, 9 },
-    { T_SRGB, 1, 1 },
-    { T_TEXT, 2, TL4_PNG_MAX_TEXT },
+    { T_GAMA, 4, 4, gama_shape_ok },
+    { T_PHYS, 9, 9, phys_shape_ok },
+    { T_SRGB, 1, 1, srgb_shape_ok },
+    { T_TEXT, 2, TL4_PNG_MAX_TEXT, text_shape_ok },
 };
 
 static const uint8_t signature[8] = { 0x89, 'P', 'N', 'G', 13, 10, 26, 10 };
 
 static void clear_info(tl4_png_info *info) { memset(info, 0, sizeof(*info)); }
 
-/* tEXt: a keyword of 1..79 printable Latin-1 characters, one NUL, printable Latin-1 text (not interpreted) */
+/* tEXt: a keyword of 1..79 printable Latin-1 characters, exactly one NUL, printable Latin-1 text (not interpreted) */
 static int text_shape_ok(const uint8_t *p, uint32_t n)
 {
     uint32_t i, nul = n;
@@ -106,13 +108,13 @@ static int text_shape_ok(const uint8_t *p, uint32_t n)
     return nul != n && nul >= 1 && nul <= 79;                             /* exactly one NUL, after 1..79 keyword bytes */
 }
 
-/* One pass over the chunks. With `cb` NULL it is the check (every CRC computed); with `cb` it is the IDAT enumeration
- * (structure and bounds re-checked, CRCs not recomputed). */
+/* The one pass over the chunks: the whole check, CRCs included, every time; with `cb` it also hands out the IDAT
+ * ranges (tl4_png_idat_enum). There is no second parser. */
 static tl4_status walk(const uint8_t *data, uint32_t size, tl4_png_info *info, tl4_png_idat_cb cb, void *context, int *stopped)
 {
     uint64_t off = 8;
     uint32_t seen_ancillary = 0;       /* bit i: allowed_ancillary[i] seen */
-    int seen_ihdr = 0, seen_idat = 0, idat_open = 0, seen_trns = 0, seen_iend = 0;
+    int seen_ihdr = 0, seen_idat = 0, idat_open = 0, seen_iend = 0;
     uint64_t idat_total = 0;
 
     if (!data) return TL4_E_ARG;
@@ -127,12 +129,9 @@ static tl4_status walk(const uint8_t *data, uint32_t size, tl4_png_info *info, t
         if (!rd32be(data, size, off, &length) || !rd32be(data, size, off + 4, &type)) return TL4_E_PNG_CHUNK;
         if (length > 0x7FFFFFFFu) return TL4_E_PNG_CHUNK;                 /* PNG: lengths below 2^31 */
         if (!in_range(size, off + 8, (uint64_t)length + 4)) return TL4_E_PNG_CHUNK;
-        if (!cb)
-        {
-            if (!rd32be(data, size, off + 8 + length, &stored_crc)) return TL4_E_PNG_CHUNK;
-            crc = crc32_update(0xFFFFFFFFu, data + off + 4, 4u + length) ^ 0xFFFFFFFFu;
-            if (crc != stored_crc) return TL4_E_PNG_CRC;
-        }
+        if (!rd32be(data, size, off + 8 + length, &stored_crc)) return TL4_E_PNG_CHUNK;
+        crc = crc32_update(0xFFFFFFFFu, data + off + 4, 4u + length) ^ 0xFFFFFFFFu;
+        if (crc != stored_crc) return TL4_E_PNG_CRC;
         info->chunks++;
 
         if (!seen_ihdr)
@@ -175,23 +174,14 @@ static tl4_status walk(const uint8_t *data, uint32_t size, tl4_png_info *info, t
             }
             else if (type == T_IHDR)
                 return TL4_E_PNG_CHUNK;                                   /* a second header */
-            else if (type == T_PLTE)
-                return TL4_E_PNG_CHUNK;                                   /* only colour type 3 has one, which is not accepted */
-            else if (type == T_TRNS)
-            {
-                /* colour type 2: one 6-byte chunk before IDAT; colour type 6 carries its alpha and has none */
-                if (seen_idat || seen_trns || info->colour_type != 2 || length != 6) return TL4_E_PNG_CHUNK;
-                seen_trns = 1;
-                info->has_trns = 1;
-            }
             else
             {
                 uint32_t i, n = (uint32_t)(sizeof(allowed_ancillary) / sizeof(allowed_ancillary[0]));
                 for (i = 0; i < n; i++) if (allowed_ancillary[i].type == type) break;
-                if (i == n) return TL4_E_PNG_CHUNK;                       /* any other type, critical or ancillary */
+                if (i == n) return TL4_E_PNG_CHUNK;                       /* any other type, PLTE and tRNS included */
                 if (seen_idat || (seen_ancillary & (1u << i))) return TL4_E_PNG_CHUNK;   /* once, before IDAT */
                 if (length < allowed_ancillary[i].min_len || length > allowed_ancillary[i].max_len) return TL4_E_PNG_CHUNK;
-                if (type == T_TEXT && !text_shape_ok(data + off + 8, length)) return TL4_E_PNG_CHUNK;
+                if (!allowed_ancillary[i].shape(data + off + 8, length)) return TL4_E_PNG_CHUNK;   /* the value range */
                 seen_ancillary |= 1u << i;
                 if (type == T_GAMA) info->has_gama = 1;
                 else if (type == T_PHYS) info->has_phys = 1;

@@ -1,6 +1,7 @@
 # L3 design note: the PNG chunk walker
 
-Ryan, 2026-11-15, for Jim 2's review before any L3 code. Labels as everywhere in `docs/`: VERIFIED (measured on the
+Ryan, 2026-11-15; Jim 2 ruled on section 5 the same day (REQUIREMENTS on main 34501f7) and set five MUSTs, all
+folded in below and marked (MUST n). Labels as everywhere in `docs/`: VERIFIED (measured on the
 32 reference styles, read-only, or in the lab), SOURCE (`path:line`; LiberNT tree cand3 6f817ad0bf7 for the engine,
 this repository for the loader), HYPOTHESIS. `docs/security/REQUIREMENTS.md` is normative; section 5 of this note
 proposes amendments and Jim 2 decides them.
@@ -52,7 +53,7 @@ typedef struct tl4_png_info {
     uint32_t width, height;            /* 1..TL4_PNG_MAX_SIDE */
     uint8_t  bit_depth, colour_type;   /* 8; 2 or 6 */
     uint8_t  interlace;                /* 0 */
-    uint8_t  has_srgb, has_gama, has_phys, has_text;
+    uint8_t  has_srgb, has_gama, has_phys, has_text;   /* the allowed ancillary chunks, bounded and range-checked */
     uint32_t chunks, idat_chunks;      /* counts */
     uint32_t idat_bytes;               /* the compressed stream, <= TL4_PNG_MAX_COMPRESSED */
     uint64_t pixels;                   /* width * height, <= TL4_PNG_MAX_PIXELS */
@@ -62,7 +63,7 @@ typedef struct tl4_png_info {
 tl4_status tl4_png_check(const uint8_t *data, uint32_t size, tl4_png_info *info);
 
 /* The IDAT chunk data ranges in file order, as (offset, size) into `data`, for a consumer that concatenates them for
- * a decoder; only after tl4_png_check passed on the same bytes, and every range is re-checked (R-GEN-11). */
+ * a decoder: tl4_png_check's own single pass with a callback, every check and every CRC again (MUST 2, R-GEN-11). */
 typedef int (*tl4_png_idat_cb)(uint32_t offset, uint32_t size, void *context);
 tl4_status tl4_png_idat_enum(const uint8_t *data, uint32_t size, tl4_png_idat_cb cb, void *context);
 
@@ -85,20 +86,20 @@ New status codes: `TL4_E_PNG_SIGNATURE`, `TL4_E_PNG_CHUNK` (length, order, repea
    - `IHDR`: only as the first chunk, length 13; width and height 1..`TL4_PNG_MAX_SIDE`, `width * height <=
      TL4_PNG_MAX_PIXELS` in 64 bits (R-RES-4, before any decoder), bit depth 8, colour type 2 or 6, compression 0,
      filter 0, interlace 0 (R-RES-3); anything else is a reject, not a downgrade.
-   - `gAMA` (length 4), `pHYs` (9), `sRGB` (1), `tEXt` (1..`TL4_PNG_MAX_TEXT`, a NUL within the first 80 bytes, every
-     other byte printable Latin-1: 32..126 or 161..255): each at most once, only before the first IDAT, **not
-     interpreted** (the values are never read into a decision; the walker only bounds them). Allowed by section 5's
-     proposal; without it, rejected like any other type.
-   - `PLTE`: only with colour type 3, which the accepted set excludes, so a reject (recorded in section 5 for the day
-     type 3 gets corpus evidence: then 3·n bytes, 1..256 entries, once, before IDAT and before tRNS).
-   - `tRNS`: for colour type 2 exactly 6 bytes, once, before IDAT; for colour type 6 (alpha already) a reject; no
-     corpus image has one (section 2), so accepted only in the shape the specification fixes.
+   - the ancillary allow-list, one table (MUST 1, as ruled): `gAMA` (length 4, gamma value ≠ 0), `pHYs` (9, unit byte
+     0 or 1), `sRGB` (1, rendering intent 0..3), `tEXt` (2..`TL4_PNG_MAX_TEXT`, a keyword of 1..79 printable Latin-1
+     bytes, exactly one NUL, printable Latin-1 text: 32..126 or 161..255): each at most once, only before the first
+     IDAT, **not interpreted** (the values are range-checked and never read into a decision).
+   - `PLTE` and `tRNS`: rejected in every shape (no corpus evidence; ruled).
    - `IDAT`: one or more, **contiguous** (an IDAT after a non-IDAT that followed an IDAT is a reject), each counted in
      `idat_chunks <= TL4_PNG_MAX_IDAT_CHUNKS`, `idat_bytes` summed in 64 bits and `<= TL4_PNG_MAX_COMPRESSED`.
    - `IEND`: length 0, only after at least one IDAT, and the walk must then be exactly at `size` (no trailing bytes).
    - any other type, critical or ancillary (`iCCP`, `cHRM`, `bKGD`, `tIME`, `zTXt`, `iTXt`, `sBIT`, `hIST`, `sPLT`,
      `eXIf`, private types): a reject (R-GEN-5: never skipped).
 4. Done only when IEND was seen; a resource that ends before IEND is a reject.
+
+`tl4_png_idat_enum` is this same pass with the callback set (MUST 2): no second parser, the CRCs are computed every
+time. The CRC table is a `static const` array in the source (MUST 3), not built at first use.
 
 Everything the walker needs is read once into locals; the decoder later reads the bytes again, so the consumer rule of
 section 5 (R-RES-6 proposal) closes that window: the consumer copies the resource once into its own buffer, runs the
@@ -125,19 +126,25 @@ ancillary ones) and the same CPU bound.
 | ancillary chunks | gAMA 4, pHYs 9, sRGB 1, tEXt 27 | — | each once; gAMA 4, pHYs 9, sRGB 1 exact; tEXt ≤ 256 (`TL4_PNG_MAX_TEXT`) |
 | IMAGE / STREAM count | 1,611 / 3 | 4,096 / 16 | checked by L1 already |
 
-## 5. Proposed requirement changes for Jim 2 (not normative until he writes them)
+## 5. Requirement changes (ruled by Jim 2, 2026-11-15; normative on main 34501f7)
+
+The proposals as submitted, with the ruling after each:
 
 - **R-RES-3 (amend, corpus evidence of section 2)**: the allowed chunk types are IHDR, PLTE, tRNS, IDAT, IEND **and the
   ancillary gAMA (4 bytes), pHYs (9), sRGB (1) and tEXt (bounded, printable, a NUL in the first 80 bytes), each at most
   once and before the first IDAT, never interpreted**. Rationale: all 30,171 reference images carry gAMA and pHYs,
   27,976 carry tEXt, 2,300 sRGB; the rule as written rejects the whole corpus. Alternative considered and not
   recommended: hand the decoder a rebuilt stream without the ancillary chunks. That is a repaired input (R-GEN-5) and
-  gAMA/sRGB can change what libpng renders (HYPOTHESIS: GDI+ ignores them; not measured).
+  gAMA/sRGB can change what libpng renders (HYPOTHESIS: GDI+ ignores them; not measured). **Ruled**: accepted with
+  value ranges (gAMA ≠ 0, pHYs unit 0 or 1, sRGB 0..3, keyword 1..79).
 - **R-RES-6 (new)**: a resource reaches a decoder only as a private copy that the walker checked after the copy was
   taken; the walker's result is never applied to bytes it did not read (R-GEN-11 across the walk/decode window).
-- **R-RES-7 (new)**: chunk count bounds of section 4 (64 chunks, 64 IDAT, one of each ancillary, tEXt ≤ 256 bytes).
-- Colour type 3 with PLTE: no corpus evidence; stays rejected. `tRNS` for colour type 2: accepted in the shape the
-  specification fixes (6 bytes), no corpus evidence either; Jim 2 may prefer a reject until evidence.
+  **Ruled**: accepted with two additions: the size limit applies before the copy, and after decoding the consumer
+  compares the decoded width and height with the walker's. This is a consumer change in `pngsup.cpp` and belongs to
+  the integration milestone I1 only; nothing in L3 touches the engine (SHOULD).
+- **R-RES-7 (new)**: chunk count bounds of section 4 (64 chunks, 64 IDAT, one of each ancillary, tEXt ≤ 256 bytes;
+  resource 4 MB + 64 KB). **Ruled**: accepted.
+- Colour type 3 with PLTE, and `tRNS` in any shape: **ruled rejected** (no corpus evidence).
 - `tl4_pixel_budget`: R-RES-4's per-style budget as a core function the consumer calls before decoding; the budget
   instance belongs to the consumer (the adapter: one per `THEME_FILE`).
 
@@ -148,8 +155,10 @@ ancillary ones) and the same CPU bound.
 - Unit (`test_png.c`): the three corpus chunk orders accepted; one negative per rule (bad signature, IHDR not first,
   IHDR length, each IHDR parameter outside the set, side 8,193, pixels over 8 M, CRC off by one bit in each chunk
   kind, repeated gAMA, tEXt without NUL, tEXt non-printable, tEXt 257 bytes, ancillary after IDAT, IDAT split by a
-  gAMA, IDAT total over 4 MB, 65 chunks, unknown type `iCCP`, IEND not last, trailing byte, missing IEND, PLTE on
-  type 6, tRNS on type 6, tRNS of 5 bytes on type 2); `tl4_png_idat_enum` returns the ranges in order and re-checks;
+  gAMA, IDAT total over 4 MB, 65 chunks, unknown type `iCCP`, IEND not last, trailing byte, missing IEND, PLTE and
+  tRNS in every shape; and MUST 5: gAMA 0, pHYs unit 2, sRGB 4, an empty keyword, an 80-byte keyword, a zero-length
+  chunk claimed past the end, length 0x80000000, the 64/65 chunk edges); `tl4_png_idat_enum` returns the ranges in
+  order and runs the whole check again (a flipped CRC fails it);
   the budget arithmetic at its edges; cleared info on every reject; determinism.
 - Limits: an image of 8,192 × 1,024 with 4 MB of IDAT in 58 chunks (64 chunks in all, the bound) walks inside the fuzz
   timeout; one more IDAT byte is a reject.
@@ -157,8 +166,9 @@ ancillary ones) and the same CPU bound.
   streams), `max_pixels`, `max_idat`, `pixels_total`; the maxima line gains the image maxima.
 - Fuzz (S2): `fuzz_png`: exact-size copy, determinism (field compare), promises: on success `pixels == width *
   height`, `idat_bytes <= size`, every IDAT range inside the buffer and contiguous, counts within the limits; on
-  failure the info is cleared. Seeds: the generated fixtures of the three corpus orders. The S1/S2 plan's custom
-  mutator for `fuzz_v4_style` can later keep PNG chunks CRC-valid so the campaign spends its time past the CRC.
+  failure the info is cleared. Two input forms from day one (MUST 4): raw bytes, and a structured form in which the
+  harness builds the PNG from (type, length, data) items and computes every CRC, so the campaign spends its time past
+  the CRC check without any CRC switch in the core. Seeds: the generated fixtures of the three corpus orders.
 
 ## 7. Open points
 

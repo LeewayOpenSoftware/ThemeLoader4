@@ -49,7 +49,7 @@ static void test_good(void)
     CHECK_STATUS(tl4_png_check(img, n, &info), TL4_OK);
     CHECK(info.width == 16 && info.height == 8 && info.pixels == 128 && info.colour_type == 6 && info.bit_depth == 8 && info.interlace == 0);
     CHECK(info.chunks == 6 && info.idat_chunks == 1 && info.idat_bytes == 100);
-    CHECK(info.has_gama && info.has_phys && info.has_text && !info.has_srgb && !info.has_trns);
+    CHECK(info.has_gama && info.has_phys && info.has_text && !info.has_srgb);
     n = pngb_image(img, sizeof(img), 3, 3720, 2, 300, 3, 1, 0);
     CHECK_STATUS(tl4_png_check(img, n, &info), TL4_OK);
     CHECK(info.has_srgb && !info.has_text && info.idat_chunks == 3 && info.idat_bytes == 300 && info.colour_type == 2 && info.pixels == 11160);
@@ -64,13 +64,6 @@ static void test_good(void)
         off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
         CHECK_STATUS(tl4_png_check(img, off, &info), TL4_OK);
         CHECK(info.pixels == TL4_PNG_MAX_PIXELS && info.chunks == 3);
-        /* tRNS on colour type 2: 6 bytes, once, before IDAT */
-        off = pngb_begin(img, sizeof(img));
-        off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 2, 0);
-        off = pngb_chunk(img, sizeof(img), off, "tRNS", 0, 6);
-        off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8);
-        off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
-        CHECK_STATUS(tl4_png_check(img, off, &info), TL4_OK); CHECK(info.has_trns);
     }
     /* determinism */
     {
@@ -196,7 +189,7 @@ static void test_rejects(void)
             expect_reject(off, TL4_E_PNG_CHUNK, unknown[k]);
         }
     }
-    /* PLTE and tRNS */
+    /* PLTE and tRNS: rejected in every shape (no corpus evidence) */
     off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 6, 0);
     off = pngb_chunk(img, sizeof(img), off, "PLTE", 0, 3); off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8); off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
     expect_reject(off, TL4_E_PNG_CHUNK, "PLTE on colour type 6");
@@ -206,6 +199,41 @@ static void test_rejects(void)
     off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 2, 0);
     off = pngb_chunk(img, sizeof(img), off, "tRNS", 0, 5); off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8); off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
     expect_reject(off, TL4_E_PNG_CHUNK, "tRNS of 5 bytes on colour type 2");
+    off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 2, 0);
+    off = pngb_chunk(img, sizeof(img), off, "tRNS", 0, 6); off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8); off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
+    expect_reject(off, TL4_E_PNG_CHUNK, "tRNS of 6 bytes on colour type 2");
+    /* the value ranges of the allow-list */
+    {
+        static const uint8_t zero4[4] = { 0, 0, 0, 0 };
+        static const uint8_t unit2[9] = { 0, 0, 0x0B, 0x13, 0, 0, 0x0B, 0x13, 2 };
+        static const uint8_t intent4[1] = { 4 };
+        static const uint8_t empty_key[3] = { 0, 'a', 'b' };
+        uint8_t key80[82];
+        off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 6, 0);
+        off = pngb_chunk(img, sizeof(img), off, "gAMA", zero4, 4); off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8); off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
+        expect_reject(off, TL4_E_PNG_CHUNK, "gAMA 0");
+        off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 6, 0);
+        off = pngb_chunk(img, sizeof(img), off, "pHYs", unit2, 9); off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8); off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
+        expect_reject(off, TL4_E_PNG_CHUNK, "pHYs unit 2");
+        off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 6, 0);
+        off = pngb_chunk(img, sizeof(img), off, "sRGB", intent4, 1); off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8); off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
+        expect_reject(off, TL4_E_PNG_CHUNK, "sRGB 4");
+        off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 6, 0);
+        off = pngb_chunk(img, sizeof(img), off, "tEXt", empty_key, 3); off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8); off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
+        expect_reject(off, TL4_E_PNG_CHUNK, "tEXt with an empty keyword");
+        memset(key80, 'k', 80); key80[80] = 0; key80[81] = 'a';
+        off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 6, 0);
+        off = pngb_chunk(img, sizeof(img), off, "tEXt", key80, 82); off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8); off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
+        expect_reject(off, TL4_E_PNG_CHUNK, "tEXt keyword of 80 characters");
+        memset(key80, 'k', 79); key80[79] = 0; key80[80] = 'a';
+        off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 6, 0);
+        off = pngb_chunk(img, sizeof(img), off, "tEXt", key80, 81); off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8); off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
+        CHECK_STATUS(tl4_png_check(img, off, &info), TL4_OK);                              /* 79 is the bound */
+    }
+    /* a zero-length chunk claimed past the end: the header fits, its CRC does not */
+    n = pngb_image(img, sizeof(img), 16, 8, 6, 100, 1, 0, 0);
+    memset(img + n, 0, 4); memcpy(img + n + 4, "IDAT", 4);
+    expect_reject(n + 8, TL4_E_PNG_CHUNK, "zero-length chunk past the end");
     off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 2, 0);
     off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 8); off = pngb_chunk(img, sizeof(img), off, "tRNS", 0, 6); off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
     expect_reject(off, TL4_E_PNG_CHUNK, "tRNS after IDAT");
@@ -233,6 +261,11 @@ static void test_rejects(void)
         for (k = 0; k < TL4_PNG_MAX_CHUNKS - 2; k++) off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 1);
         off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
         CHECK_STATUS(tl4_png_check(img, off, &info), TL4_OK); CHECK(info.chunks == TL4_PNG_MAX_CHUNKS && info.idat_chunks == TL4_PNG_MAX_CHUNKS - 2);
+        /* 65 chunks: one IDAT more than the 64-chunk bound allows */
+        off = pngb_begin(img, sizeof(img)); off = pngb_ihdr(img, sizeof(img), off, 4, 4, 8, 6, 0);
+        for (k = 0; k < TL4_PNG_MAX_CHUNKS - 1; k++) off = pngb_chunk(img, sizeof(img), off, "IDAT", 0, 1);
+        off = pngb_chunk(img, sizeof(img), off, "IEND", 0, 0);
+        CHECK_STATUS(tl4_png_check(img, off, &info), TL4_E_LIMIT); CHECK(cleared(&info));
     }
 }
 
@@ -255,9 +288,10 @@ static void test_enum_and_budget(void)
     CHECK_STATUS(tl4_png_idat_enum(img, n, enum_cb, acc, &stopped), TL4_OK);
     CHECK(acc[0] == 2 && stopped == 9);
     CHECK_STATUS(tl4_png_idat_enum(img, n, 0, acc, &stopped), TL4_E_ARG);
-    img[n - 1] ^= 1;                                                      /* the structure is re-checked, not the CRC */
+    img[n - 1] ^= 1;                                                      /* the same pass: the CRC is checked again */
     acc[0] = 0; acc[3] = 0;
-    CHECK_STATUS(tl4_png_idat_enum(img, n, enum_cb, acc, &stopped), TL4_OK);
+    CHECK_STATUS(tl4_png_idat_enum(img, n, enum_cb, acc, &stopped), TL4_E_PNG_CRC);
+    img[n - 1] ^= 1;
     CHECK_STATUS(tl4_png_idat_enum(img, n - 1, enum_cb, acc, &stopped), TL4_E_PNG_CHUNK);
     /* the budget */
     CHECK_STATUS(tl4_pixel_budget_take(&b, 60), TL4_OK); CHECK(b.used == 60);

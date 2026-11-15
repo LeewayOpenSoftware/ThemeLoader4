@@ -9,10 +9,12 @@
  * that the caller holds, and decides whether a decoder may see it: the PNG signature; a bounded chunk loop in which
  * every length lies inside the resource and every CRC-32 matches; IHDR first with the accepted parameter set (8-bit,
  * colour type 2 or 6, no interlace); the side, pixel and compressed-size limits of REQUIREMENTS section 6, taken from
- * IHDR before any decoding; an allow-list of chunk types, each with its exact or bounded length and at most once
- * (ancillary chunks are bounded, never interpreted); IDAT chunks contiguous; IEND last and the resource ending exactly
- * there. Every other chunk type, critical or ancillary, is a reject (R-GEN-5). The walker allocates nothing, reads
- * every value once into a local (R-GEN-11), decodes nothing and knows no zlib.
+ * IHDR before any decoding; an allow-list of ancillary chunk types in one table, each with its exact or bounded length,
+ * a value range, at most once and only before the first IDAT (gAMA, pHYs, sRGB, tEXt: bounded and range-checked, never
+ * interpreted); IDAT chunks contiguous; IEND last and the resource ending exactly there. Every other chunk type,
+ * critical or ancillary, PLTE and tRNS included (no corpus evidence), is a reject (R-GEN-5). The IDAT enumeration is
+ * the same single pass with a callback: the full check, CRCs included, runs every time. The walker allocates nothing,
+ * reads every value once into a local (R-GEN-11), decodes nothing and knows no zlib.
  *
  * The consumer copies the resource once into its own buffer, runs the walker on the copy and decodes the copy, so the
  * decoder sees exactly the bytes that were checked (design note section 3.2, proposed R-RES-6).
@@ -39,7 +41,6 @@ typedef struct tl4_png_info {
     uint32_t width, height;            /* 1..TL4_PNG_MAX_SIDE */
     uint8_t bit_depth, colour_type;    /* 8; 2 (RGB) or 6 (RGBA) */
     uint8_t interlace;                 /* 0 */
-    uint8_t has_trns;                  /* a tRNS chunk (colour type 2 only, 6 bytes) */
     uint8_t has_srgb, has_gama, has_phys, has_text;   /* the ancillary chunks of the allow-list, bounded, not read */
     uint32_t chunks, idat_chunks;
     uint32_t idat_bytes;               /* the compressed stream, <= TL4_PNG_MAX_COMPRESSED */
@@ -50,8 +51,8 @@ typedef struct tl4_png_info {
 tl4_status tl4_png_check(const uint8_t *data, uint32_t size, tl4_png_info *info);
 
 /* The IDAT chunk data ranges in file order, as (offset, size) into `data`, for a consumer that concatenates the
- * compressed stream for a decoder. It walks the chunk structure again with every bound re-checked (R-GEN-11) and
- * fails the same way tl4_png_check would; the callback returns nonzero to stop (reported through `stopped`). */
+ * compressed stream for a decoder. It is tl4_png_check's own pass with a callback: every check, CRCs included, runs
+ * again (R-GEN-11); the callback returns nonzero to stop (reported through `stopped`). */
 typedef int (*tl4_png_idat_cb)(uint32_t offset, uint32_t size, void *context);
 tl4_status tl4_png_idat_enum(const uint8_t *data, uint32_t size, tl4_png_idat_cb cb, void *context, int *stopped);
 
