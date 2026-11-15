@@ -81,6 +81,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     if (!copy) return 0;
     memcpy(copy, data, size);
 
+    /* tl4_pe has tail padding that tl4_pe_open does not write: clear both before the byte comparison */
+    memset(&pe, 0, sizeof(pe));
+    memset(&pe2, 0, sizeof(pe2));
     st = tl4_pe_open(copy, size, &pe);
     /* S1 point 5: the same bytes give the same status and the same handle, field by field */
     st2 = tl4_pe_open(copy, size, &pe2);
