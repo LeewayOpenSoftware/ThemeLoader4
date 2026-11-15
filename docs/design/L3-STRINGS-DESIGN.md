@@ -143,9 +143,11 @@ tl4_status tl4_strings_get2(const tl4_strings *s, uint32_t id, uint16_t *out, ui
 1. Windows' source for colour/size display names and tooltips in a version-4 style (HYPOTHESIS; vsprobe can measure
    `EnumThemeColors` on the host once the controlled environment exists).
 2. Which `.mui` language the adapter picks when the user's language is absent (en-US fallback is the proposal).
-3. Whether the 70 entries of the shipped version-3 style pass the exact shape check is NOT VERIFIED until the
-   `tl4_loader_test_shipped` run on libernt-srv says so (those blocks come from our own resource compiler, not from the
-   corpus); if one has padding after the 16th string, Jim 2 rules before anything is loosened.
+3. VERIFIED 2026-11-15 (`tl4_loader_test_shipped`, gcc and ASan builds on libernt-srv, 1,254 checks): the 70 entries of
+   the shipped version-3 style pass the exact shape check with nothing loosened: 5 blocks, 70 entries, 224 strings
+   (1 to 8 per entry), longest 43 code units (id 5004), 14 languages per block; every entry serves at least one string
+   in its own language and the lowest-id lookup equals the explicit one. The 32 corpus styles and the two `.mui`
+   pass as well (844 entries, 1,091 strings, longest 72, one language everywhere).
 
 ## 8. Evidence
 
