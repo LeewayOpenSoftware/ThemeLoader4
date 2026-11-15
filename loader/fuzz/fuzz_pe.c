@@ -19,6 +19,7 @@
 struct touch_ctx {
     const tl4_pe *pe;
     uint32_t seen;
+    uint32_t multi_pairs;   /* pairs with more than one language entry, counted on their lowest entry */
     int changed;        /* the buffer was overwritten after the open: ranges still hold, agreement need not */
 };
 
@@ -44,6 +45,7 @@ static int touch_cb(const tl4_resource *r, void *ctx)
     PROMISE(r->offset <= pe->size && r->size <= pe->size - r->offset);
     PROMISE(r->data == pe->base + r->offset);
     PROMISE(r->language <= 0xFFFFu);
+    PROMISE(r->nlanguages >= 1 && r->nlanguages <= TL4_PE_MAX_LANGUAGES);     /* R-PE-8 */
     check_name(pe, &r->type);
     check_name(pe, &r->name);
     if (r->size)
@@ -52,11 +54,19 @@ static int touch_cb(const tl4_resource *r, void *ctx)
         sink = r->data[r->size - 1];
     }
     (void)sink;
-    /* find() agrees with enum(): the same (type, name) resolves to the same bytes (on an unchanged buffer) */
+    /* find() agrees with enum(): the same (type, name) resolves to the pair's lowest language entry, with the same
+     * count, and to the same bytes when this row is that entry (on an unchanged buffer) */
     if (!c->changed)
     {
         PROMISE(tl4_pe_find(pe, &r->type, &r->name, &again) == TL4_OK);
-        PROMISE(again.offset == r->offset && again.size == r->size && again.language == r->language);
+        PROMISE(again.nlanguages == r->nlanguages && again.language <= r->language);
+        if (again.language == r->language)
+        {
+            PROMISE(again.offset == r->offset && again.size == r->size);
+            if (r->nlanguages > 1) c->multi_pairs++;
+        }
+        else
+            PROMISE(r->nlanguages > 1);
     }
     c->seen++;
     return 0;
@@ -96,9 +106,15 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     }
     ctx.pe = &pe;
     ctx.seen = 0;
+    ctx.multi_pairs = 0;
     ctx.changed = 0;
     PROMISE(tl4_pe_enum(&pe, touch_cb, &ctx, &stopped) == TL4_OK && stopped == 0);
-    PROMISE(ctx.seen == pe.nresources);
+    PROMISE(ctx.seen == pe.nresources && ctx.multi_pairs == pe.nmulti_pairs);
+    {
+        /* R-PE-8: a file that opens has at most one language entry for PACKTHEM_VERSION */
+        tl4_res_name pv = tl4_res_ascii("PACKTHEM_VERSION"), one = tl4_res_id(1);
+        if (tl4_pe_find(&pe, &pv, &one, &r) == TL4_OK) PROMISE(r.nlanguages == 1);
+    }
     for (i = 0; i < sizeof(types) / sizeof(types[0]); i++)
     {
         PROMISE(tl4_pe_count_type(&pe, &types[i], &cnt) == TL4_OK);

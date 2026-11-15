@@ -58,6 +58,49 @@ static void expect_reject(tl4_status want, const char *what)
     if (s.cmap_names != 0 || s.variant.records != 0 || s.images != 0) { failures++; printf("FAIL %s: %s left statistics behind\n", __FILE__, what); }
 }
 
+/* R-PE-8 as amended: the reader accepts a style with a multi-language pair, the version-4 validator does not (its
+ * accepted set is unchanged); a second language entry on PACKTHEM_VERSION is refused by the reader itself. */
+static void test_languages(void)
+{
+    static uint8_t mui[64 * 1024];
+    uint32_t i;
+    for (i = 1; i <= 10; i++)
+    {
+        tl4_pe pe;
+        tl4_v4_stats s;
+        size_t n;
+        v4f_default(&parts); parts.extra_language_of = i;
+        n = v4f_build(&parts, image, sizeof(image));
+        CHECK(n > 0);
+        if (i == 1)
+        {
+            CHECK_STATUS(tl4_pe_open(image, n, &pe), TL4_E_RSRC_LANGUAGES);   /* PACKTHEM_VERSION: refused for every loader */
+            continue;
+        }
+        CHECK_STATUS(tl4_pe_open(image, n, &pe), TL4_OK);
+        CHECK(pe.nmulti_pairs == 1 && pe.nresources == 11);
+        CHECK_STATUS(tl4_v4_validate(&pe, 0, &s), TL4_E_RSRC_LANGUAGES);
+        CHECK(s.cmap_names == 0 && s.variant.records == 0 && s.images == 0);
+    }
+    /* the same rule for the strings mapping (R-RES-1: every requirement of the style applies to it) */
+    {
+        tl4_pe pe, strings_pe;
+        tl4_v4_stats s;
+        size_t n, m;
+        v4f_default(&parts); parts.extra_language_of = 10;    /* the string block gets a second language */
+        m = v4f_build(&parts, mui, sizeof(mui));
+        v4f_default(&parts);
+        n = v4f_build(&parts, image, sizeof(image));
+        CHECK(n > 0 && m > 0);
+        CHECK_STATUS(tl4_pe_open(image, n, &pe), TL4_OK);
+        CHECK_STATUS(tl4_pe_open(mui, m, &strings_pe), TL4_OK);
+        CHECK_STATUS(tl4_v4_validate(&pe, &strings_pe, &s), TL4_E_RSRC_LANGUAGES);
+        m = v4f_build(&parts, mui, sizeof(mui));
+        CHECK_STATUS(tl4_pe_open(mui, m, &strings_pe), TL4_OK);
+        CHECK_STATUS(tl4_v4_validate(&pe, &strings_pe, &s), TL4_OK);   /* one language each: accepted as before */
+    }
+}
+
 static void test_version(void)
 {
     v4f_default(&parts); parts.version[0] = 3; expect_reject(TL4_E_V4_VERSION, "R-V4-1 version 3");
@@ -265,6 +308,7 @@ int main(void)
 {
     test_good();
     test_version();
+    test_languages();
     test_cmap();
     test_vmap();
     test_bcmap();

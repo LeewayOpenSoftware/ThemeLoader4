@@ -57,6 +57,18 @@ int main(int argc, char **argv)
         {"TEXTFILE", 0, "NORMALNORMAL_INI", 0, 0, blob, 64},
     };
     pb_res one[] = {{NULL, 10, NULL, 1, 0, blob, 1}};
+    pb_res langs[] = {   /* R-PE-8 as amended: several language entries per pair, PACKTHEM_VERSION with one */
+        {"PACKTHEM_VERSION", 0, NULL, 1, 0, version3, 2},
+        {"IMAGE", 0, NULL, 508, 0, blob, 32},
+        {"IMAGE", 0, NULL, 508, 1031, blob, 24},
+        {"COLORNAMES", 0, NULL, 1, 1033, blob, 26},
+        {"COLORNAMES", 0, NULL, 1, 1036, blob, 26},
+        {"COLORNAMES", 0, NULL, 1, 3082, blob, 26},
+        {NULL, 6, NULL, 32, 1031, blob, 48},
+        {NULL, 6, NULL, 32, 1033, blob, 48},
+        {NULL, 6, NULL, 32, 1036, blob, 40},
+        {NULL, 6, NULL, 33, 1033, blob, 48},
+    };
     pb_options o32plus = {1, 0, 0, 0}, o32 = {0, 0, 0, 0}, osecs = {1, 0x3000, 2, 0};
     v4f_parts parts;
     uint8_t blobbuf[4096];
@@ -73,6 +85,9 @@ int main(int argc, char **argv)
     n = pb_build(style, sizeof(style) / sizeof(style[0]), &osecs, image, sizeof(image), NULL);   rc |= !n || write_file(dir, "pe", "style_sections.bin", image, n);
     n = pb_build(v3, sizeof(v3) / sizeof(v3[0]), &o32, image, sizeof(image), NULL);              rc |= !n || write_file(dir, "pe", "v3_like.bin", image, n);
     n = pb_build(one, 1, &o32plus, image, sizeof(image), NULL);                                  rc |= !n || write_file(dir, "pe", "one_resource.bin", image, n);
+    n = pb_build(langs, sizeof(langs) / sizeof(langs[0]), &o32, image, sizeof(image), NULL);     rc |= !n || write_file(dir, "pe", "v3_languages.bin", image, n);
+    v4f_default(&parts); parts.extra_language_of = 7;                                            /* IMAGE 508 in two languages */
+    n = v4f_build(&parts, image, sizeof(image));                                                 rc |= !n || write_file(dir, "pe", "style_languages.bin", image, n);
 
     /* fuzz_v4_style: a complete valid style, and two near misses the validator rejects */
     v4f_default(&parts);
@@ -110,6 +125,11 @@ int main(int argc, char **argv)
         nb = v4f_build(&parts, image, sizeof(image));
         rc |= !nb || nb != na;
         if (nb == na) { memcpy(pair + na, image, nb); rc |= write_file(dir, "v4_two_pass", "valid_dups.bin", pair, 2 * na); }
+        /* B: the same style with a second language entry on an IMAGE (R-PE-8): B validates on its own only as a reject */
+        v4f_default(&parts); parts.extra_language_of = 7;
+        nb = v4f_build(&parts, image, sizeof(image));
+        rc |= !nb || nb != na;
+        if (nb == na) { memcpy(pair + na, image, nb); rc |= write_file(dir, "v4_two_pass", "valid_lang.bin", pair, 2 * na); }
     }
 
     /* fuzz_png: the corpus' three chunk orders and the bare minimum, all generated */
@@ -136,6 +156,6 @@ int main(int argc, char **argv)
     prefixed[0] = 4; prefixed[1] = 5; memcpy(prefixed + 2, image, n);                          rc |= !n || write_file(dir, "v4_blob", "strings.bin", prefixed, 2 + n);
 
     if (rc) { fprintf(stderr, "mkseeds: failed\n"); return 1; }
-    printf("mkseeds: 24 seeds written under %s\n", dir);
+    printf("mkseeds: 27 seeds written under %s\n", dir);
     return 0;
 }

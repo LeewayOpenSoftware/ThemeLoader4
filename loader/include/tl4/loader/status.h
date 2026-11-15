@@ -22,7 +22,8 @@ typedef enum tl4_status {
     TL4_E_RSRC_ENTRY,      /* a directory entry points outside the resource area or at itself */
     TL4_E_RSRC_NAME,       /* a string name is out of bounds, empty or too long */
     TL4_E_RSRC_ORDER,      /* entries are not strictly ascending with names before ids (R-PE-8) */
-    TL4_E_RSRC_LANGUAGES,  /* a (type, name) pair has more than one language entry (R-PE-8) */
+    TL4_E_RSRC_LANGUAGES,  /* a pair has over TL4_PE_MAX_LANGUAGES language entries or a named one, PACKTHEM_VERSION
+                            * has more than one, or the version-4 path met a multi-language pair (R-PE-8) */
     TL4_E_RSRC_DATA,       /* a data entry is outside the section's raw data */
     TL4_E_NOT_FOUND,       /* lookup: no such resource */
 

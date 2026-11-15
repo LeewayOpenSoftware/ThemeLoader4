@@ -48,7 +48,8 @@ static int handles_equal(const tl4_pe *a, const tl4_pe *b)
            a->section_table_off == b->section_table_off && a->rsrc_rva == b->rsrc_rva && a->rsrc_dir_size == b->rsrc_dir_size &&
            a->rsrc_section_va == b->rsrc_section_va && a->rsrc_section_raw == b->rsrc_section_raw &&
            a->rsrc_section_raw_size == b->rsrc_section_raw_size && a->rsrc_off == b->rsrc_off && a->rsrc_limit == b->rsrc_limit &&
-           a->ndirectories == b->ndirectories && a->nentries == b->nentries && a->nresources == b->nresources;
+           a->ndirectories == b->ndirectories && a->nentries == b->nentries && a->nresources == b->nresources &&
+           a->nmulti_pairs == b->nmulti_pairs;
 }
 
 static void check_within(const tl4_model *m, size_t need)

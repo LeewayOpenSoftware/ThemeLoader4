@@ -55,7 +55,7 @@ void v4f_default(v4f_parts *p)
 
 size_t v4f_build(const v4f_parts *p, uint8_t *out, size_t cap)
 {
-    pb_res res[12];
+    pb_res res[13];
     uint32_t n = 0;
     pb_options o = {1, 0, 0, 0};
 
@@ -69,5 +69,11 @@ size_t v4f_build(const v4f_parts *p, uint8_t *out, size_t cap)
     if (!p->omit_image_509) { res[n].type_name = "IMAGE"; res[n].type_id = 0; res[n].name_name = 0; res[n].name_id = 509; res[n].language = 0; res[n].data = p->image; res[n].size = 32; n++; }
     res[n].type_name = "STREAM"; res[n].type_id = 0; res[n].name_name = 0; res[n].name_id = 1718; res[n].language = 0; res[n].data = p->stream; res[n].size = 32; n++;
     if (!p->omit_strings) { res[n].type_name = 0; res[n].type_id = 6; res[n].name_name = 0; res[n].name_id = 32; res[n].language = 1033; res[n].data = p->strings; res[n].size = p->strings_size; n++; }
+    if (p->extra_language_of >= 1 && p->extra_language_of <= n)
+    {
+        res[n] = res[p->extra_language_of - 1];
+        res[n].language = 1031;
+        n++;
+    }
     return pb_build(res, n, &o, out, cap, 0);
 }

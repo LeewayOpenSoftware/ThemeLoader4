@@ -12,7 +12,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define PB_MAX_RESOURCES 4400   /* enough for a style at the limits of REQUIREMENTS section 6 (4,096 images) */
+#define PB_MAX_RESOURCES 16600  /* a style at the limits of REQUIREMENTS section 6 (4,096 images), and one data entry
+                                 * over the R-PE-7 total of 16,384 */
 
 /* One resource. A NULL name string means "use the id". */
 typedef struct pb_res {

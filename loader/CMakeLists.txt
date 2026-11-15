@@ -38,6 +38,13 @@ if(TL4_BUILD_TESTS)
 
     # Corpus runner (R-V4-13): reads TL4_CORPUS_DIR at run time, exit 77 = skipped when it is unset. The reference
     # files never enter the repository; tests/corpus-expected.csv holds their statistics only.
+    # R-PE-8 (2026-11-15): the shipped version-3 style, read from TL4_SHIPPED_STYLE at run time; exit 77 = skipped.
+    # The file never enters the repository (R-PROC-1).
+    tl4_add_test(tl4_loader_test_shipped SOURCES tests/test_shipped.c LIBS tl4_loader_core)
+    if(MSVC)
+        target_compile_definitions(tl4_loader_test_shipped PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+
     tl4_add_test(tl4_loader_corpus_v4 SOURCES tests/corpus_v4.c LIBS tl4_loader_core)
     set_tests_properties(tl4_loader_corpus_v4 PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests"
@@ -72,7 +79,8 @@ if(TL4_BUILD_TESTS)
         endforeach()
         add_test(NAME tl4_loader_fuzz_pe_seeds COMMAND tl4_loader_fuzz_pe_seeds
                  "${TL4_LOADER_SEEDS}/pe/style_pe32plus.bin" "${TL4_LOADER_SEEDS}/pe/style_pe32.bin"
-                 "${TL4_LOADER_SEEDS}/pe/style_sections.bin" "${TL4_LOADER_SEEDS}/pe/v3_like.bin" "${TL4_LOADER_SEEDS}/pe/one_resource.bin")
+                 "${TL4_LOADER_SEEDS}/pe/style_sections.bin" "${TL4_LOADER_SEEDS}/pe/v3_like.bin" "${TL4_LOADER_SEEDS}/pe/one_resource.bin"
+                 "${TL4_LOADER_SEEDS}/pe/v3_languages.bin" "${TL4_LOADER_SEEDS}/pe/style_languages.bin")
         add_test(NAME tl4_loader_fuzz_v4_style_seeds COMMAND tl4_loader_fuzz_v4_style_seeds
                  "${TL4_LOADER_SEEDS}/v4_style/valid.bin" "${TL4_LOADER_SEEDS}/v4_style/no_bcmap.bin" "${TL4_LOADER_SEEDS}/v4_style/empty_variant.bin")
         add_test(NAME tl4_loader_fuzz_v4_blob_seeds COMMAND tl4_loader_fuzz_v4_blob_seeds
@@ -94,7 +102,8 @@ if(TL4_BUILD_TESTS)
         target_link_libraries(tl4_loader_fuzz_v4_two_pass_seeds PRIVATE tl4_loader_core_testing)
         tl4_warnings(tl4_loader_fuzz_v4_two_pass_seeds)
         add_test(NAME tl4_loader_fuzz_v4_two_pass_seeds COMMAND tl4_loader_fuzz_v4_two_pass_seeds
-                 "${TL4_LOADER_SEEDS}/v4_two_pass/valid_valid.bin" "${TL4_LOADER_SEEDS}/v4_two_pass/valid_dups.bin")
+                 "${TL4_LOADER_SEEDS}/v4_two_pass/valid_valid.bin" "${TL4_LOADER_SEEDS}/v4_two_pass/valid_dups.bin"
+                 "${TL4_LOADER_SEEDS}/v4_two_pass/valid_lang.bin")
         set_tests_properties(tl4_loader_fuzz_pe_seeds tl4_loader_fuzz_v4_style_seeds tl4_loader_fuzz_v4_blob_seeds tl4_loader_fuzz_v4_model_seeds tl4_loader_fuzz_v4_two_pass_seeds tl4_loader_fuzz_png_seeds
                              PROPERTIES DEPENDS tl4_loader_mkseeds)
     endif()

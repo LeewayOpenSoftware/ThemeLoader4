@@ -58,7 +58,7 @@ static void test_good_image(int pe32plus)
     tl4_pe pe;
     tl4_resource r;
     tl4_res_name t, n;
-    struct enum_ctx ctx = {0, 0, 0, 1, 0, {{0}, {0}, 0, 0, 0, 0, 0}};
+    struct enum_ctx ctx = {0, 0, 0, 1, 0, {{0}, {0}, 0, 0, 0, 0, 0, 0}};
     int stopped = -1;
     size_t n_bytes = build_style_like(&o, &lay);
 
@@ -262,10 +262,11 @@ static void test_corruptions(void)
             CHECK(pb_get32(image + idir + 16) == 508 && pb_get32(image + idir + 24) == 509 && pb_get32(image + idir + 32) == 510);
             corrupt32(n, idir + 24, 508, TL4_E_RSRC_ORDER);
             corrupt32(n, idir + 32, 1, TL4_E_RSRC_ORDER);
-            /* R-PE-8: a second language entry under 508 (the directory claims two entries) */
+            /* R-PE-8 as amended: a header that claims a second language entry where none is laid out reads the next
+             * directory's header as that entry, whose data entry is outside the section */
             {
                 uint32_t ldir = lay.rsrc_raw + (pb_get32(image + idir + 20) & 0x7FFFFFFFu);
-                corrupt16(n, ldir + 14, 2, TL4_E_RSRC_LANGUAGES);
+                corrupt16(n, ldir + 14, 2, TL4_E_RSRC_DATA);
             }
         }
     }
@@ -282,6 +283,189 @@ static void test_corruptions(void)
     corrupt32(n, lay.first_data_entry, 0xFFFFFFF0u, TL4_E_RSRC_DATA);
     /* the raw size shrunk below the tree: the walk must fail, not read past the declared data */
     corrupt32(n, lay.section_header + 16, 0x40, TL4_E_NO_RESOURCES);
+}
+
+/* R-PE-8 as amended 2026-11-15: 1 to 64 language entries per (type, name), ids strictly ascending; a lookup returns
+ * the lowest id and the count; the handle counts the pairs with more than one; PACKTHEM_VERSION has exactly one. */
+static const pb_res lang_res[] = {
+    {"PACKTHEM_VERSION", 0, NULL, 1, 0, version4, 2},
+    {"IMAGE", 0, NULL, 508, 1031, png_like, 8},
+    {"IMAGE", 0, NULL, 508, 0, png_like, sizeof(png_like)},
+    {"IMAGE", 0, NULL, 509, 0, png_like, 12},
+    {NULL, 6, NULL, 32, 2057, cmap, 4},
+    {NULL, 6, NULL, 32, 1033, cmap, sizeof(cmap)},
+    {NULL, 6, NULL, 33, 1033, cmap, 6},
+};
+#define LANG_COUNT (sizeof(lang_res) / sizeof(lang_res[0]))
+
+struct lang_ctx { int calls; int bad; int have_prev; uint32_t prev_lang; uint32_t multi_rows; tl4_res_name prev_type, prev_name; };
+
+static int lang_cb(const tl4_resource *r, void *ctx)
+{
+    struct lang_ctx *c = (struct lang_ctx *)ctx;
+    if (r->nlanguages < 1 || r->nlanguages > TL4_PE_MAX_LANGUAGES) c->bad++;
+    if (c->have_prev && tl4_res_name_equal(&c->prev_type, &r->type) && tl4_res_name_equal(&c->prev_name, &r->name))
+    {
+        if (r->language <= c->prev_lang) c->bad++;       /* ascending inside a pair */
+        if (r->nlanguages < 2) c->bad++;
+    }
+    if (r->nlanguages > 1) c->multi_rows++;
+    c->prev_type = r->type; c->prev_name = r->name; c->prev_lang = r->language; c->have_prev = 1;
+    c->calls++;
+    return 0;
+}
+
+static void test_languages(void)
+{
+    pb_options o = {1, 0, 0, 0};
+    pb_layout lay;
+    tl4_pe pe;
+    tl4_resource r;
+    tl4_res_name t, n;
+    struct lang_ctx ctx;
+    uint32_t cnt = 0;
+    int stopped = -1;
+    size_t bytes = pb_build(lang_res, LANG_COUNT, &o, image, sizeof(image), &lay);
+
+    CHECK(bytes > 0);
+    CHECK_STATUS(tl4_pe_open(image, bytes, &pe), TL4_OK);
+    CHECK(pe.nresources == 7 && pe.nmulti_pairs == 2);
+    CHECK(pe.ndirectories == 1 + 3 + 5 && pe.nentries == 3 + 5 + 7);   /* root, 3 types, 5 names; 7 language entries */
+    /* the lookup returns the lowest language id and the count of the pair */
+    t = tl4_res_ascii("IMAGE"); n = tl4_res_id(508);
+    CHECK_STATUS(tl4_pe_find(&pe, &t, &n, &r), TL4_OK);
+    CHECK(r.language == 0 && r.nlanguages == 2 && r.size == sizeof(png_like));
+    n = tl4_res_id(509);
+    CHECK_STATUS(tl4_pe_find(&pe, &t, &n, &r), TL4_OK);
+    CHECK(r.language == 0 && r.nlanguages == 1 && r.size == 12);
+    CHECK_STATUS(tl4_pe_count_type(&pe, &t, &cnt), TL4_OK);
+    CHECK(cnt == 2);                                       /* pairs, not language entries */
+    t = tl4_res_id(6); n = tl4_res_id(32);
+    CHECK_STATUS(tl4_pe_find(&pe, &t, &n, &r), TL4_OK);
+    CHECK(r.language == 1033 && r.nlanguages == 2 && r.size == sizeof(cmap));
+    t = tl4_res_ascii("PACKTHEM_VERSION"); n = tl4_res_id(1);
+    CHECK_STATUS(tl4_pe_find(&pe, &t, &n, &r), TL4_OK);
+    CHECK(r.nlanguages == 1);
+    /* enum: one call per language entry, ascending inside a pair, the count on every row */
+    memset(&ctx, 0, sizeof(ctx));
+    CHECK_STATUS(tl4_pe_enum(&pe, lang_cb, &ctx, &stopped), TL4_OK);
+    CHECK(ctx.calls == 7 && ctx.bad == 0 && ctx.multi_rows == 4 && stopped == 0);
+
+    /* one corruption per rejection path of the language level (R-PROC-4), on IMAGE 508's two entries */
+    {
+        uint32_t k, image_entry = 0;
+        for (k = 0; k < 3; k++)
+        {
+            uint32_t nm = pb_get32(image + lay.root_entries + 8 * k), rel = nm & 0x7FFFFFFFu;
+            if ((nm & 0x80000000u) && image[lay.rsrc_raw + rel] == 5 && image[lay.rsrc_raw + rel + 2] == 'I')
+                image_entry = lay.root_entries + 8 * k;
+        }
+        CHECK(image_entry != 0);
+        if (image_entry)
+        {
+            uint32_t idir = lay.rsrc_raw + (pb_get32(image + image_entry + 4) & 0x7FFFFFFFu);
+            uint32_t ldir = lay.rsrc_raw + (pb_get32(image + idir + 20) & 0x7FFFFFFFu);   /* 508's language directory */
+            uint32_t de2 = lay.rsrc_raw + pb_get32(image + ldir + 28);                   /* the second entry's data entry */
+            CHECK(pb_get32(image + idir + 16) == 508);
+            CHECK(pb_get32(image + ldir + 16) == 0 && pb_get32(image + ldir + 24) == 1031);
+            corrupt32(bytes, ldir + 24, 0, TL4_E_RSRC_ORDER);                            /* equal ids */
+            corrupt32(bytes, ldir + 16, 2000, TL4_E_RSRC_ORDER);                         /* descending */
+            corrupt32(bytes, ldir + 24, 0x80000000u | 16u, TL4_E_RSRC_NAME);             /* a named entry at level three */
+            corrupt32(bytes, ldir + 24, 0x10000, TL4_E_RSRC_NAME);                       /* an id above 16 bits */
+            corrupt32(bytes, ldir + 28, 0x80000000u | 16u, TL4_E_RSRC_DIRECTORY);        /* a directory at level three */
+            corrupt32(bytes, ldir + 28, lay.rsrc_raw_size - 8, TL4_E_RSRC_DATA);         /* its data entry outside the section */
+            corrupt32(bytes, de2 + 4, lay.rsrc_raw_size, TL4_E_RSRC_DATA);               /* its data beyond the raw data */
+            corrupt16(bytes, ldir + 14, 0, TL4_E_RSRC_DIRECTORY);                        /* no language entry at all */
+            corrupt16(bytes, ldir + 12, 1, TL4_E_RSRC_LANGUAGES);                        /* the header claims a named one */
+        }
+    }
+}
+
+static pb_res many[TL4_PE_MAX_LANGUAGES + 2];
+
+/* 64 entries pass, 65 are rejected; out-of-order and duplicate ids are rejected; PACKTHEM_VERSION with two is refused */
+static void test_language_limit(void)
+{
+    pb_options o = {1, 0, 0, 0};
+    tl4_pe pe;
+    tl4_resource r;
+    tl4_res_name t = tl4_res_ascii("IMAGE"), n = tl4_res_id(508);
+    pb_res v = {"PACKTHEM_VERSION", 0, NULL, 1, 0, version4, 2};
+    uint32_t i;
+    size_t bytes;
+
+    many[0] = v;
+    for (i = 0; i <= TL4_PE_MAX_LANGUAGES; i++)
+    {
+        pb_res e = {"IMAGE", 0, NULL, 508, 0, png_like, 4};
+        e.language = 1024 + i;                                 /* 1024..1088, ascending */
+        many[1 + i] = e;
+    }
+    bytes = pb_build(many, 1 + TL4_PE_MAX_LANGUAGES, &o, image, sizeof(image), NULL);
+    CHECK(bytes > 0);
+    CHECK_STATUS(tl4_pe_open(image, bytes, &pe), TL4_OK);
+    CHECK(pe.nresources == 1 + TL4_PE_MAX_LANGUAGES && pe.nmulti_pairs == 1 && pe.nentries == 2 + 2 + 1 + TL4_PE_MAX_LANGUAGES);
+    CHECK_STATUS(tl4_pe_find(&pe, &t, &n, &r), TL4_OK);
+    CHECK(r.language == 1024 && r.nlanguages == TL4_PE_MAX_LANGUAGES && r.size == 4);
+    bytes = pb_build(many, 2 + TL4_PE_MAX_LANGUAGES, &o, image, sizeof(image), NULL);
+    CHECK(bytes > 0);
+    CHECK_STATUS(tl4_pe_open(image, bytes, &pe), TL4_E_RSRC_LANGUAGES);
+    CHECK(pe.base == NULL && pe.nmulti_pairs == 0);          /* R-GEN-5 */
+    {
+        pb_options unsorted = {1, 0, 0, 1};
+        pb_res two[3];
+        two[0] = many[1]; two[0].language = 1033;
+        two[1] = many[1]; two[1].language = 1031;
+        two[2] = v;                                            /* IMAGE before PACKTHEM_VERSION: the type order holds as given */
+        bytes = pb_build(two, 3, &unsorted, image, sizeof(image), NULL);
+        CHECK(bytes > 0);
+        CHECK_STATUS(tl4_pe_open(image, bytes, &pe), TL4_E_RSRC_ORDER);
+        two[1].language = 1033;                                /* the sorting builder keeps both: a duplicate id */
+        bytes = pb_build(two, 3, &o, image, sizeof(image), NULL);
+        CHECK(bytes > 0);
+        CHECK_STATUS(tl4_pe_open(image, bytes, &pe), TL4_E_RSRC_ORDER);
+    }
+    {
+        pb_res ver2[3];
+        ver2[0] = v; ver2[1] = v; ver2[1].language = 1033; ver2[2] = many[1];
+        bytes = pb_build(ver2, 3, &o, image, sizeof(image), NULL);
+        CHECK(bytes > 0);
+        CHECK_STATUS(tl4_pe_open(image, bytes, &pe), TL4_E_RSRC_LANGUAGES);   /* refused at the open, for every loader */
+        CHECK(pe.base == NULL);
+    }
+}
+
+#define TOTAL_NAMES 256u
+static pb_res total_res[1 + TOTAL_NAMES * TL4_PE_MAX_LANGUAGES];
+static uint8_t big[1024 * 1024];
+
+/* every pair within its bound, the file over the R-PE-7 total of data entries */
+static void test_language_totals(void)
+{
+    pb_options o = {1, 0, 0, 0};
+    tl4_pe pe;
+    pb_res v = {"PACKTHEM_VERSION", 0, NULL, 1, 0, version4, 2};
+    uint32_t name, lang, k = 0;
+    size_t bytes;
+
+    total_res[k++] = v;
+    for (name = 0; name < TOTAL_NAMES; name++)
+        for (lang = 0; lang < TL4_PE_MAX_LANGUAGES; lang++)
+        {
+            pb_res e = {"IMAGE", 0, NULL, 0, 0, png_like, 0};
+            e.name_id = 1000 + name; e.language = 1 + lang;
+            total_res[k++] = e;
+        }
+    /* 255 names x 64 languages + 1 = 16,321 data entries */
+    bytes = pb_build(total_res, 1 + (TOTAL_NAMES - 1) * TL4_PE_MAX_LANGUAGES, &o, big, sizeof(big), NULL);
+    CHECK(bytes > 0);
+    CHECK_STATUS(tl4_pe_open(big, bytes, &pe), TL4_OK);
+    CHECK(pe.nresources == 1 + (TOTAL_NAMES - 1) * TL4_PE_MAX_LANGUAGES && pe.nmulti_pairs == TOTAL_NAMES - 1);
+    /* 256 x 64 + 1 = 16,385: the total is the rejection, not any pair */
+    bytes = pb_build(total_res, 1 + TOTAL_NAMES * TL4_PE_MAX_LANGUAGES, &o, big, sizeof(big), NULL);
+    CHECK(bytes > 0);
+    CHECK_STATUS(tl4_pe_open(big, bytes, &pe), TL4_E_RSRC_DIRECTORY);
+    CHECK(pe.base == NULL);
 }
 
 /* R-PE-8 through the builder: unsorted input kept as is must be rejected for order. */
@@ -383,6 +567,9 @@ int main(void)
     test_failed_open_clears();
     test_corruptions();
     test_unsorted_builder();
+    test_languages();
+    test_language_limit();
+    test_language_totals();
     test_lowercase_stored_name();
     test_variants();
     printf("%d checks, %d failures\n", checks, failures);

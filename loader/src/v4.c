@@ -429,6 +429,9 @@ tl4_status tl4_v4_validate(const tl4_pe *style, const tl4_pe *strings, tl4_v4_st
     if (!style || !style->base) return TL4_E_ARG;
     if (strings && !strings->base) return TL4_E_ARG;
 
+    /* R-PE-8: the version-4 path accepts no file with a multi-language pair (its accepted set is unchanged) */
+    if (style->nmulti_pairs != 0 || (strings && strings->nmulti_pairs != 0)) { st = TL4_E_RSRC_LANGUAGES; goto fail; }
+
     /* R-V4-1 */
     t = tl4_res_ascii("PACKTHEM_VERSION"); n = tl4_res_id(1);
     if (tl4_pe_find(style, &t, &n, &res) != TL4_OK || res.size != 2 || !rd16(res.data, res.size, 0, &cnt) || cnt != 4) { st = TL4_E_V4_VERSION; goto fail; }
