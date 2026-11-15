@@ -41,6 +41,16 @@ static int props_equal(const tl4_prop *a, const tl4_prop *b)
            a->ref_off == b->ref_off && a->ref_size == b->ref_size;
 }
 
+/* The two handles describe the same layout: every field but the base pointer, compared one by one. */
+static int handles_equal(const tl4_pe *a, const tl4_pe *b)
+{
+    return a->size == b->size && a->machine == b->machine && a->nsections == b->nsections && a->is_pe32plus == b->is_pe32plus &&
+           a->section_table_off == b->section_table_off && a->rsrc_rva == b->rsrc_rva && a->rsrc_dir_size == b->rsrc_dir_size &&
+           a->rsrc_section_va == b->rsrc_section_va && a->rsrc_section_raw == b->rsrc_section_raw &&
+           a->rsrc_section_raw_size == b->rsrc_section_raw_size && a->rsrc_off == b->rsrc_off && a->rsrc_limit == b->rsrc_limit &&
+           a->ndirectories == b->ndirectories && a->nentries == b->nentries && a->nresources == b->nresources;
+}
+
 static void check_within(const tl4_model *m, size_t need)
 {
     uint32_t i;
@@ -93,8 +103,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     else
     {
         check_within(&changed, need);
-        /* B on its own, when it validates: the same model */
-        if (tl4_pe_open(b, half, &pe_b) == TL4_OK && tl4_v4_validate(&pe_b, 0, &s_b) == TL4_OK)
+        /* B on its own, when it validates AND lays its sections and resources out like A: the same model. The swapped
+         * build keeps A's offsets, so a B that is valid at other offsets is a different file, not a finding. */
+        if (tl4_pe_open(b, half, &pe_b) == TL4_OK && tl4_v4_validate(&pe_b, 0, &s_b) == TL4_OK && handles_equal(&pe, &pe_b))
         {
             need_b = tl4_model_size(&s_b);
             buf_b = (uint64_t *)malloc(need_b);
