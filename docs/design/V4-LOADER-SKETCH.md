@@ -36,7 +36,7 @@ struct V4Record {           // 32 bytes, records are 8-byte aligned
     int32 partId;           // 0..94 seen
     int32 stateId;          // 0..20 seen
     int32 reference;        // 0 -> cbData bytes of inline data follow; != 0 -> no inline data, see below
-    int32 reserved;         // always 0 in the corpus
+    int32 field7;           // not interpreted: 0 in the stock styles, other values in third-party styles
     int32 cbData;           // inline size (reference == 0) or logical size (reference != 0; 92 for FONT)
 };
 ```
@@ -48,7 +48,7 @@ Walk: `off = 0; while (off + 32 <= size) { read header; off += 32; if (reference
 | typeId | TMT name | inline data (reference == 0) | seen in corpus |
 |---|---|---|---|
 | 200 | ENUM | int32 | yes (1,184 in stock aero) |
-| 201 | STRING | UTF-16, cbData bytes, zero-terminated | yes (2 per file + RMAP) |
+| 201 | STRING | UTF-16, cbData bytes, zero-terminated; or header-only with reference = string id (the RMAP documentation strings) | yes (2 inline per file + 12 references in RMAP) |
 | 202 | INT | int32 | yes |
 | 203 | BOOL | int32 (0/1) | yes |
 | 204 | COLOR | COLORREF as int32 (0x00BBGGRR) | yes |
