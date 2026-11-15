@@ -108,7 +108,8 @@ check, decode) is what changes.
 ### 3.3 Cost
 
 One pass over the resource: O(size) for the CRC, nothing else. At the limits (4 MB) a few milliseconds; the R-V4-14
-style of tests gets an image at the limits (8,192 × 1,024 of 4 MB IDAT) and the same CPU bound.
+style of tests gets an image at the limits (8,192 × 1,024 with 4 MB of IDAT in 58 chunks: 64 chunks in all with the
+ancillary ones) and the same CPU bound.
 
 ## 4. Limits (section 6 of REQUIREMENTS, with the proposals of this note)
 
@@ -150,7 +151,8 @@ style of tests gets an image at the limits (8,192 × 1,024 of 4 MB IDAT) and the
   gAMA, IDAT total over 4 MB, 65 chunks, unknown type `iCCP`, IEND not last, trailing byte, missing IEND, PLTE on
   type 6, tRNS on type 6, tRNS of 5 bytes on type 2); `tl4_png_idat_enum` returns the ranges in order and re-checks;
   the budget arithmetic at its edges; cleared info on every reject; determinism.
-- Limits: an image of 8,192 × 1,024 with 4 MB of IDAT in 64 chunks walks inside the fuzz timeout.
+- Limits: an image of 8,192 × 1,024 with 4 MB of IDAT in 58 chunks (64 chunks in all, the bound) walks inside the fuzz
+  timeout; one more IDAT byte is a reject.
 - Corpus (`corpus_v4.c`): walk every IMAGE and STREAM of every style; new columns `images_ok` (must equal images +
   streams), `max_pixels`, `max_idat`, `pixels_total`; the maxima line gains the image maxima.
 - Fuzz (S2): `fuzz_png`: exact-size copy, determinism (field compare), promises: on success `pixels == width *

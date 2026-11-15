@@ -56,6 +56,11 @@ const char *tl4_status_name(tl4_status status)
         case TL4_E_TYPE: return "type";
         case TL4_E_BUFFER: return "buffer";
         case TL4_E_FONT_SYNTAX: return "font-syntax";
+        case TL4_E_PNG_SIGNATURE: return "png-signature";
+        case TL4_E_PNG_CHUNK: return "png-chunk";
+        case TL4_E_PNG_CRC: return "png-crc";
+        case TL4_E_PNG_IHDR: return "png-ihdr";
+        case TL4_E_LIMIT: return "limit";
     }
     return "unknown";
 }

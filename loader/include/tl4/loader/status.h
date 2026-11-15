@@ -42,7 +42,14 @@ typedef enum tl4_status {
     TL4_E_MODEL_SIZE,      /* the caller's buffer is smaller than tl4_model_size(), or the input grew since the sizing pass */
     TL4_E_TYPE,            /* the property is not of the type the getter serves */
     TL4_E_BUFFER,          /* the caller's output buffer is too small (never truncated, R-GEN-5) */
-    TL4_E_FONT_SYNTAX      /* a font string outside the known syntax */
+    TL4_E_FONT_SYNTAX,     /* a font string outside the known syntax */
+
+    /* PNG chunk walker (REQUIREMENTS R-RES-3/4/5, milestone L3) */
+    TL4_E_PNG_SIGNATURE,   /* not a PNG, or too short for one */
+    TL4_E_PNG_CHUNK,       /* a chunk's length, order, repeat or type is not allowed */
+    TL4_E_PNG_CRC,         /* a chunk's CRC does not match */
+    TL4_E_PNG_IHDR,        /* IHDR not first, not 13 bytes, or outside the accepted parameter set */
+    TL4_E_LIMIT            /* an image limit of section 6 (side, pixels, compressed size, chunks, budget) */
 } tl4_status;
 
 const char *tl4_status_name(tl4_status status);

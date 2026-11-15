@@ -12,6 +12,7 @@
 #include "pebuild.h"
 #include "v4fixture.h"
 #include "v4build.h"
+#include "pngbuild.h"
 
 static uint8_t image[64 * 1024];
 static uint8_t prefixed[64 * 1024 + 2];
@@ -111,6 +112,18 @@ int main(int argc, char **argv)
         if (nb == na) { memcpy(pair + na, image, nb); rc |= write_file(dir, "v4_two_pass", "valid_dups.bin", pair, 2 * na); }
     }
 
+    /* fuzz_png: the corpus' three chunk orders and the bare minimum, all generated */
+    n = pngb_image(image, sizeof(image), 16, 8, 6, 200, 1, 0, 1);  rc |= !n || write_file(dir, "png", "rgba_text.bin", image, n);
+    n = pngb_image(image, sizeof(image), 24, 12, 2, 300, 3, 1, 0); rc |= !n || write_file(dir, "png", "rgb_srgb.bin", image, n);
+    n = pngb_image(image, sizeof(image), 8, 8, 6, 100, 2, 1, 1);   rc |= !n || write_file(dir, "png", "rgba_srgb_text.bin", image, n);
+    {
+        uint32_t off = pngb_begin(image, sizeof(image));
+        off = pngb_ihdr(image, sizeof(image), off, 1, 1, 8, 2, 0);
+        off = pngb_chunk(image, sizeof(image), off, "IDAT", 0, 4);
+        off = pngb_chunk(image, sizeof(image), off, "IEND", 0, 0);
+        rc |= !off || write_file(dir, "png", "minimal.bin", image, off);
+    }
+
     /* fuzz_v4_blob: selector byte, CMAP-count byte, then the blob */
     v4f_default(&parts);
     blobbuf[0] = 0; blobbuf[1] = 5; memcpy(blobbuf + 2, parts.cmap, parts.cmap_size);          rc |= write_file(dir, "v4_blob", "cmap.bin", blobbuf, 2 + parts.cmap_size);
@@ -123,6 +136,6 @@ int main(int argc, char **argv)
     prefixed[0] = 4; prefixed[1] = 5; memcpy(prefixed + 2, image, n);                          rc |= !n || write_file(dir, "v4_blob", "strings.bin", prefixed, 2 + n);
 
     if (rc) { fprintf(stderr, "mkseeds: failed\n"); return 1; }
-    printf("mkseeds: 20 seeds written under %s\n", dir);
+    printf("mkseeds: 24 seeds written under %s\n", dir);
     return 0;
 }
