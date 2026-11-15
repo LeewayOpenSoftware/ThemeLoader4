@@ -440,3 +440,12 @@ The SHOULDs are answered as follows:
 - Service accounts and the guard: 5.6.
 - Apitests that load from a temporary path: 5.9.
 - Concurrent loads, sharing violation, a TI-owned style in a privileged process, and the T-GATE-1 service-SID test: section 8.
+
+## 13. Notes for I1a-T (Jim 2, design v3 PASS)
+
+- **Process identity (5.2, 5.6).** The stale-mark test and the parent check take pid and creation time from one `NtQuerySystemInformation(SystemProcessInformation)` snapshot. "Cannot open" never means "gone". A parent that no longer exists, or whose creation time is not earlier than ours, is not the SCM.
+- **The T-DEF-5 fact (5.1, 5.11).** The fact lives in the volatile subkey `ComponentOwner` of the gate key. Every reader applies the writable test to the gate key and to that subkey, and treats a failure as "TI is ordinary". The `Services\TrustedInstaller` check is "absent, or not user-writable by that same test".
+- **Handle names (5.4 step 3).** The object name of a handle is the name after any reparse, and it is not normalized. 8.3 names and streams are excluded by the name rule (no `~`, no `:` can come out of a built path). The section 8 junction and symlink tests must show this on `ntfs_new`.
+- **Run-as tokens (5.2).** A `LogonUser` (run-as) token of a standard user has session id 0 on LiberNT (I1-ACL-TOKEN-EVIDENCE). Such a process is classified privileged and gets only `Machine` styles. That is the safe side, and intended.
+- **T-PRIV-6** stays in the integration (logon process, `Winlogon` or `Screen-saver` desktop, or a window station other than `WinSta0` uses the machine default), with its own test. `tl4_trust_uses_machine_default` covers T-PRIV-2 only.
+- **Version peek and R-PE-8 (open, 2026-11-15).** The shipped v3 `aero.msstyles` has `RT_STRING` blocks in 14 languages. The bounded PE reader refuses it under R-PE-8, so the version peek of 2.3 step 4 cannot use the reader unchanged. A ruling is pending: amend R-PE-8 for the general reader, use a separate peek, or change the T-LOAD-2 wording.
