@@ -4,6 +4,7 @@
 add_library(tl4_loader_core STATIC
     src/pe.c
     src/v4.c
+    src/model.c
 )
 target_include_directories(tl4_loader_core PUBLIC include)
 tl4_warnings(tl4_loader_core)
@@ -17,6 +18,7 @@ if(TL4_BUILD_TESTS)
 
     tl4_add_test(tl4_loader_test_pe SOURCES tests/test_pe.c LIBS tl4_loader_core tl4_loader_fixtures)
     tl4_add_test(tl4_loader_test_v4 SOURCES tests/test_v4.c LIBS tl4_loader_core tl4_loader_fixtures)
+    tl4_add_test(tl4_loader_test_model SOURCES tests/test_model.c LIBS tl4_loader_core tl4_loader_fixtures)
     # R-V4-14: a style at the limits validates inside the fuzz timeout; the CPU bound applies to plain builds only
     tl4_add_test(tl4_loader_test_v4_limits SOURCES tests/test_v4_limits.c LIBS tl4_loader_core tl4_loader_fixtures)
     if(TL4_SANITIZE OR TL4_FUZZ)
@@ -42,13 +44,13 @@ if(TL4_BUILD_TESTS)
     endif()
     set(TL4_LOADER_SEEDS "${CMAKE_CURRENT_BINARY_DIR}/fuzz/seeds")
     add_test(NAME tl4_loader_seeds_dir COMMAND ${CMAKE_COMMAND} -E make_directory
-             "${TL4_LOADER_SEEDS}/pe" "${TL4_LOADER_SEEDS}/v4_style" "${TL4_LOADER_SEEDS}/v4_blob")
+             "${TL4_LOADER_SEEDS}/pe" "${TL4_LOADER_SEEDS}/v4_style" "${TL4_LOADER_SEEDS}/v4_blob" "${TL4_LOADER_SEEDS}/v4_model")
     add_test(NAME tl4_loader_mkseeds COMMAND tl4_loader_mkseeds "${TL4_LOADER_SEEDS}")
     set_tests_properties(tl4_loader_mkseeds PROPERTIES DEPENDS tl4_loader_seeds_dir)
 
     if(NOT TL4_FUZZ)
         # the harnesses as plain programs: every generated seed goes through LLVMFuzzerTestOneInput once
-        foreach(h pe v4_style v4_blob)
+        foreach(h pe v4_style v4_blob v4_model)
             add_executable(tl4_loader_fuzz_${h}_seeds fuzz/fuzz_${h}.c)
             target_compile_definitions(tl4_loader_fuzz_${h}_seeds PRIVATE TL4_FUZZ_STANDALONE=1)
             if(MSVC)
@@ -66,7 +68,10 @@ if(TL4_BUILD_TESTS)
                  "${TL4_LOADER_SEEDS}/v4_blob/cmap.bin" "${TL4_LOADER_SEEDS}/v4_blob/vmap.bin" "${TL4_LOADER_SEEDS}/v4_blob/bcmap.bin"
                  "${TL4_LOADER_SEEDS}/v4_blob/variant.bin" "${TL4_LOADER_SEEDS}/v4_blob/rmap.bin"
                  "${TL4_LOADER_SEEDS}/v4_blob/strings.bin")
-        set_tests_properties(tl4_loader_fuzz_pe_seeds tl4_loader_fuzz_v4_style_seeds tl4_loader_fuzz_v4_blob_seeds
+        add_test(NAME tl4_loader_fuzz_v4_model_seeds COMMAND tl4_loader_fuzz_v4_model_seeds
+                 "${TL4_LOADER_SEEDS}/v4_model/valid.bin" "${TL4_LOADER_SEEDS}/v4_model/no_bcmap.bin" "${TL4_LOADER_SEEDS}/v4_model/empty_variant.bin"
+                 "${TL4_LOADER_SEEDS}/v4_model/duplicates.bin")
+        set_tests_properties(tl4_loader_fuzz_pe_seeds tl4_loader_fuzz_v4_style_seeds tl4_loader_fuzz_v4_blob_seeds tl4_loader_fuzz_v4_model_seeds
                              PROPERTIES DEPENDS tl4_loader_mkseeds)
     endif()
 endif()
@@ -76,3 +81,4 @@ endif()
 tl4_add_fuzzer(fuzz_pe SOURCES fuzz/fuzz_pe.c LIBS tl4_loader_core)
 tl4_add_fuzzer(fuzz_v4_style SOURCES fuzz/fuzz_v4_style.c LIBS tl4_loader_core)
 tl4_add_fuzzer(fuzz_v4_blob SOURCES fuzz/fuzz_v4_blob.c LIBS tl4_loader_core)
+tl4_add_fuzzer(fuzz_v4_model SOURCES fuzz/fuzz_v4_model.c LIBS tl4_loader_core)

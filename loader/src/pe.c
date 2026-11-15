@@ -52,6 +52,10 @@ const char *tl4_status_name(tl4_status status)
         case TL4_E_V4_END: return "v4-end";
         case TL4_E_V4_LIMIT: return "v4-limit";
         case TL4_E_V4_REFERENCE: return "v4-reference";
+        case TL4_E_MODEL_SIZE: return "model-size";
+        case TL4_E_TYPE: return "type";
+        case TL4_E_BUFFER: return "buffer";
+        case TL4_E_FONT_SYNTAX: return "font-syntax";
     }
     return "unknown";
 }

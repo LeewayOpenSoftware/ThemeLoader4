@@ -3,7 +3,7 @@
 Every reader in `loader/` gets a libFuzzer harness from its first commit (REQUIREMENTS A.14). The harnesses live
 here and are built two ways:
 
-- `-DTL4_FUZZ=ON` with clang: real libFuzzer targets (`fuzz_pe`, ...) with AddressSanitizer and
+- `-DTL4_FUZZ=ON` with clang: real libFuzzer targets (`fuzz_pe`, `fuzz_v4_blob`, `fuzz_v4_style`, `fuzz_v4_model`) with AddressSanitizer and
   UndefinedBehaviorSanitizer (the top-level build adds the sanitizers). The CI smoke step runs each one for 20,000
   inputs on the generated seeds in `<build>/loader/fuzz/seeds/<harness>`.
 - otherwise: the same source as a standalone program (`tl4_loader_fuzz_pe_seeds`) that feeds the generated seeds

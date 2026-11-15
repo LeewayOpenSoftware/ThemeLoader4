@@ -101,7 +101,9 @@ tl4_status tl4_pe_enum(const tl4_pe *pe, tl4_res_callback callback, void *contex
 /* Find the resource (type, name); there is exactly one language entry (R-PE-8). */
 tl4_status tl4_pe_find(const tl4_pe *pe, const tl4_res_name *type, const tl4_res_name *name, tl4_resource *out);
 
-/* Count the name entries under a type: TL4_OK with *count (0 when the type is absent), or the lookup's error. */
+/* Count the name entries under a type: TL4_OK with *count (0 when the type is absent), or the lookup's error. Like
+ * every lookup it is meaningful only on a handle a successful tl4_pe_open() filled: a failed open clears the handle
+ * and the call then returns TL4_E_ARG with *count 0. */
 tl4_status tl4_pe_count_type(const tl4_pe *pe, const tl4_res_name *type, uint32_t *count);
 
 #endif
