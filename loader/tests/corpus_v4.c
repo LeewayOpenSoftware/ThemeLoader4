@@ -12,6 +12,7 @@
 #include <string.h>
 #include <tl4/loader/model.h>
 #include <tl4/loader/png.h>
+#include <tl4/loader/strings.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -137,6 +138,8 @@ static int ends_with(const char *s, const char *suffix)
 struct totals {
     int files, ok, mismatched, failed, unknown;
     tl4_v4_stats max;
+    tl4_strings_stats max_str;                     /* R-RES-8: blocks per file, string length, languages per block */
+    unsigned long str_entries, str_strings;        /* over every table of every file */
     unsigned long max_size;
     unsigned long max_pixels, max_idat, max_chunks, max_side, images_failed;   /* over every image of every style */
 };
@@ -241,6 +244,21 @@ static void check_file(const char *path, const char *name, struct totals *t)
                w.max_pixels, w.max_idat, w.max_chunks, w.max_side, w.pixels_total,
                e ? "" : "  (not in the expected table)", bad ? "  MISMATCH with the expected table" : "");
         /* a ready row for the expected table, so a regeneration copies rather than retypes */
+        {
+            /* R-RES-8 statistics of the tables the validator just accepted: the style's, and the module's when one was opened */
+            tl4_strings_stats ss, sm;
+            memset(&sm, 0, sizeof(sm));
+            if (tl4_strings_check(&pe, &ss) != TL4_OK || (strings && tl4_strings_check(strings, &sm) != TL4_OK))
+                printf("%-36s string table check failed after a successful validation\n", name);
+            printf("%-36s strings: style blocks %u entries %u strings %u max %u chars (id %u) languages %u; module blocks %u entries %u strings %u max %u chars (id %u) languages %u\n",
+                   "", ss.blocks, ss.entries, ss.strings, ss.max_chars, ss.longest_id, ss.max_languages,
+                   sm.blocks, sm.entries, sm.strings, sm.max_chars, sm.longest_id, sm.max_languages);
+            max_u(&t->max_str.blocks, ss.blocks + sm.blocks);
+            max_u(&t->max_str.max_chars, ss.max_chars); max_u(&t->max_str.max_chars, sm.max_chars);
+            max_u(&t->max_str.max_languages, ss.max_languages); max_u(&t->max_str.max_languages, sm.max_languages);
+            t->str_entries += ss.entries + sm.entries;
+            t->str_strings += ss.strings + sm.strings;
+        }
         printf("csvrow: %s,%lu,%s,ok,4,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%lu,%lu,%lu,%lu,%lu,%lu\n", sha, (unsigned long)size, name, s.cmap_names, s.bcmap_entries,
                s.variant.records + s.variant.dropped_unknown_type + s.variant.dropped_ref_on_value,
                s.rmap.records + s.rmap.dropped_unknown_type + s.rmap.dropped_ref_on_value, s.images, s.streams, s.string_blocks,
@@ -313,6 +331,8 @@ int main(int argc, char **argv)
            t.max.variant.classes, t.max.variant.max_cb, t.max.variant.max_part, t.max.variant.max_state, t.max.images, t.max.streams);
     printf("images: %lu failed the chunk walker; maxima: %lu pixels, %lu compressed bytes, %lu chunks, side %lu\n",
            t.images_failed, t.max_pixels, t.max_idat, t.max_chunks, t.max_side);
+    printf("string tables: %lu block entries, %lu strings over every table; maxima: blocks per file %u, string %u characters, languages per block %u\n",
+           t.str_entries, t.str_strings, t.max_str.blocks, t.max_str.max_chars, t.max_str.max_languages);
     if (t.files == 0) { printf("no .msstyles under %s\n", dir); return 1; }
     return (t.failed || t.mismatched || t.images_failed) ? 1 : 0;
 }

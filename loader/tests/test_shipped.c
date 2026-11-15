@@ -2,16 +2,18 @@
  * PROJECT:     Theme Loader 4 - loader tests
  * LICENSE:     LGPL-2.1-or-later (https://spdx.org/licenses/LGPL-2.1-or-later)
  * PURPOSE:     The shipped version-3 style of the system under the amended R-PE-8 (2026-11-15): it opens, its
- *              PACKTHEM_VERSION is 3 with one language entry, and its multi-language pairs are counted
+ *              PACKTHEM_VERSION is 3 with one language entry, its multi-language pairs are counted, and its string
+ *              table passes the shape check of R-RES-8 in every language (L3b)
  * COPYRIGHT:   Copyright 2026 Leeway Open Software
  *
  * The file is read from the path in TL4_SHIPPED_STYLE at run time and never enters the repository (R-PROC-1).
- * Exit 77 = skipped when the variable is unset.
+ * Exit 77 = skipped when the variable is unset. Counts only are printed, no text (R-PROC-1).
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <tl4/loader/pe.h>
+#include <tl4/loader/strings.h>
 
 static int failures = 0, checks = 0;
 #define CHECK(cond) do { checks++; if (!(cond)) { failures++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); } } while (0)
@@ -23,6 +25,12 @@ struct shipped_ctx {
     uint32_t rows, pairs, multi_pairs, max_languages;
     uint32_t string_pairs, string_langs_min, string_langs_max;   /* RT_STRING (#6): one table per language */
 };
+
+#define MAX_ROWS 4096
+struct string_row { uint32_t block, language; };
+static struct string_row rows[MAX_ROWS];
+static uint32_t nrows, rows_dropped;
+static uint16_t out[TL4_STR_MAX_CHARS + 2];
 
 static int count_cb(const tl4_resource *r, void *ctx)
 {
@@ -42,6 +50,11 @@ static int count_cb(const tl4_resource *r, void *ctx)
             if (r->nlanguages > c->string_langs_max) c->string_langs_max = r->nlanguages;
         }
     }
+    if (r->type.kind == TL4_NAME_ID && r->type.id == 6 && r->name.kind == TL4_NAME_ID)
+    {
+        if (nrows < MAX_ROWS) { rows[nrows].block = r->name.id; rows[nrows].language = r->language; nrows++; }
+        else rows_dropped++;
+    }
     return 0;
 }
 
@@ -59,6 +72,58 @@ static uint8_t *read_file(const char *path, size_t *size)
     fclose(f);
     *size = (size_t)len;
     return buf;
+}
+
+/* R-RES-8 on the shipped table: every entry passes, every entry serves at least one string in its own language, the
+ * lowest-id lookup is the explicit lookup of the block's lowest id, the buffer rule holds. */
+static void check_strings(const tl4_pe *pe, const struct shipped_ctx *ctx)
+{
+    tl4_strings_stats ss;
+    uint32_t i, id, chars, total = 0, buffer_checked = 0, min_per_entry = 0xFFFFFFFFu, max_per_entry = 0;
+    tl4_status st;
+
+    CHECK_STATUS(tl4_strings_check(pe, &ss), TL4_OK);
+    if (ss.blocks == 0 && ss.entries == 0) { printf("string table: none\n"); return; }
+    CHECK(ss.blocks == ctx->string_pairs);
+    CHECK(ss.max_languages == ctx->string_langs_max);
+    CHECK(rows_dropped == 0 && ss.entries == nrows);
+    for (i = 0; i < nrows; i++)
+    {
+        uint32_t found = 0, lowest_lang = rows[i].language, k;
+        for (k = i; k > 0 && rows[k - 1].block == rows[i].block; k--) lowest_lang = rows[k - 1].language;   /* the first entry of the block */
+        for (id = 16 * (rows[i].block - 1); id < 16 * rows[i].block; id++)
+        {
+            st = tl4_strings_get(pe, id, rows[i].language, out, TL4_STR_MAX_CHARS + 1, &chars);
+            if (st == TL4_OK)
+            {
+                uint32_t off1 = 0, n1 = 0, off2 = 0, n2 = 0;
+                found++;
+                CHECK(chars >= 1 && chars <= TL4_STR_MAX_CHARS && out[chars] == 0);
+                if (rows[i].language == lowest_lang)
+                {
+                    CHECK_STATUS(tl4_strings_locate(pe, id, TL4_STR_LANG_LOWEST, &off1, &n1), TL4_OK);
+                    CHECK_STATUS(tl4_strings_locate(pe, id, lowest_lang, &off2, &n2), TL4_OK);
+                    CHECK(off1 == off2 && n1 == n2 && n1 == chars);
+                }
+                if (!buffer_checked)
+                {
+                    CHECK_STATUS(tl4_strings_get(pe, id, rows[i].language, out, chars, &n1), TL4_E_BUFFER);
+                    CHECK(n1 == 0 && out[0] == 0);
+                    CHECK_STATUS(tl4_strings_get(pe, id, rows[i].language, out, chars + 1, &n1), TL4_OK);
+                    buffer_checked = 1;
+                }
+            }
+            else
+                CHECK_STATUS(st, TL4_E_NOT_FOUND);
+        }
+        CHECK(found >= 1);
+        if (found < min_per_entry) min_per_entry = found;
+        if (found > max_per_entry) max_per_entry = found;
+        total += found;
+    }
+    CHECK(total == ss.strings);
+    printf("string table: %u blocks, %u entries, %u strings (%u..%u per entry), longest %u code units (id %u), up to %u languages per block\n",
+           ss.blocks, ss.entries, ss.strings, min_per_entry, max_per_entry, ss.max_chars, ss.longest_id, ss.max_languages);
 }
 
 int main(void)
@@ -97,6 +162,7 @@ int main(void)
                "%u string tables with %u..%u languages, version %u\n",
                (unsigned long)size, pe.nresources, ctx.pairs, pe.nmulti_pairs, ctx.max_languages,
                ctx.string_pairs, ctx.string_langs_min, ctx.string_langs_max, r.size == 2 ? (unsigned)r.data[0] : 0u);
+        check_strings(&pe, &ctx);
     }
     free(data);
     printf("%d checks, %d failures\n", checks, failures);

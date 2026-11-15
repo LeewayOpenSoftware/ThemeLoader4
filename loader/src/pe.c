@@ -60,6 +60,7 @@ const char *tl4_status_name(tl4_status status)
         case TL4_E_PNG_CHUNK: return "png-chunk";
         case TL4_E_PNG_CRC: return "png-crc";
         case TL4_E_PNG_IHDR: return "png-ihdr";
+        case TL4_E_STR_BLOCK: return "string-block";
         case TL4_E_LIMIT: return "limit";
     }
     return "unknown";
@@ -594,6 +595,28 @@ tl4_status tl4_pe_find(const tl4_pe *pe, const tl4_res_name *type, const tl4_res
     if ((st = read_language(pe, noff, 0, &res)) != TL4_OK) return st;   /* entry 0 is the lowest id: the walk checked the order */
     *out = res;
     return TL4_OK;
+}
+
+tl4_status tl4_pe_find_language(const tl4_pe *pe, const tl4_res_name *type, const tl4_res_name *name, uint32_t language,
+                                tl4_resource *out)
+{
+    uint32_t toff, nnames, named, ne, noff, nlangs, l;
+    tl4_resource res;
+    tl4_status st;
+    if (!pe || !pe->base || !type || !name || !out) return TL4_E_ARG;
+    if (language > 0xFFFFu) return TL4_E_ARG;
+    if ((st = find_type(pe, type, &toff, &nnames, &named, &res.type)) != TL4_OK) return st;
+    if ((st = find_entry(pe, toff, nnames, named, name, &ne, &res.name)) != TL4_OK) return st;
+    if ((st = subdir_of(pe, ne, toff, &noff)) != TL4_OK) return st;
+    if ((st = leaf_header(pe, noff, &nlangs)) != TL4_OK) return st;
+    res.nlanguages = nlangs;
+    for (l = 0; l < nlangs; l++)                                      /* at most TL4_PE_MAX_LANGUAGES reads (R-V4-14) */
+    {
+        if ((st = read_language(pe, noff, l, &res)) != TL4_OK) return st;
+        if (res.language == language) { *out = res; return TL4_OK; }
+        if (res.language > language) break;                           /* ascending ids (R-PE-8): nothing after can match */
+    }
+    return TL4_E_NOT_FOUND;
 }
 
 tl4_status tl4_pe_count_type(const tl4_pe *pe, const tl4_res_name *type, uint32_t *count)

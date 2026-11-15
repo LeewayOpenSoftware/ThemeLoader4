@@ -5,6 +5,7 @@
  * COPYRIGHT:   Copyright 2026 Leeway Open Software
  */
 #include "tl4/loader/v4.h"
+#include "tl4/loader/strings.h"
 
 #define RECORD_HEADER 32u
 #define NO_BASE 0xFFFFFFFFu
@@ -323,35 +324,20 @@ tl4_status tl4_v4_walk_records(const uint8_t *data, uint32_t size, uint32_t cmap
 
 /* ---- string table (R-RES-1, bounded) ----------------------------------------------------------------------- */
 
+/* The L1 entry point, now a wrapper of the L3 reader (loader/src/strings.c): the lowest language entry (the only
+ * one in a version-4 file), and the 255-character bound of a referenced string (R-RES-2) reported as "not found", so
+ * that a longer string stays an unresolved reference as before. */
 tl4_status tl4_v4_find_string(const tl4_pe *pe, uint32_t id, const uint8_t **utf16, uint32_t *chars)
 {
-    tl4_res_name type = tl4_res_id(6), name;
-    tl4_resource block;
+    uint32_t off = 0, n = 0;
     tl4_status st;
-    uint32_t off = 0, i, want;
     if (!utf16 || !chars) return TL4_E_ARG;
     *utf16 = 0; *chars = 0;
-    if (!pe || !pe->base) return TL4_E_ARG;
-    if (id > 0xFFFFu) return TL4_E_ARG;
-    name = tl4_res_id(id / 16u + 1u);
-    if ((st = tl4_pe_find(pe, &type, &name, &block)) != TL4_OK) return st;
-    want = id % 16u;
-    for (i = 0; i < 16; i++)
-    {
-        uint32_t len;
-        if (!rd16(block.data, block.size, off, &len)) return TL4_E_NOT_FOUND;
-        off += 2;
-        if (!in_range(block.size, off, (uint64_t)len * 2)) return TL4_E_NOT_FOUND;
-        if (i == want)
-        {
-            if (len == 0 || len > TL4_V4_MAX_FONT_CHARS) return TL4_E_NOT_FOUND;
-            *utf16 = block.data + off;
-            *chars = len;
-            return TL4_OK;
-        }
-        off += 2u * len;
-    }
-    return TL4_E_NOT_FOUND;
+    if ((st = tl4_strings_locate(pe, id, TL4_STR_LANG_LOWEST, &off, &n)) != TL4_OK) return st;
+    if (n > TL4_V4_MAX_FONT_CHARS) return TL4_E_NOT_FOUND;
+    *utf16 = pe->base + off;
+    *chars = n;
+    return TL4_OK;
 }
 
 /* ---- the whole container ----------------------------------------------------------------------------------- */
@@ -421,6 +407,7 @@ tl4_status tl4_v4_validate(const tl4_pe *style, const tl4_pe *strings, tl4_v4_st
     tl4_v4_vmap vmap;
     tl4_v4_bcmap bcmap;
     struct resolve_ctx ctx;
+    tl4_strings_stats ss;
     tl4_status st;
     uint32_t unresolved, cnt;
 
@@ -431,6 +418,10 @@ tl4_status tl4_v4_validate(const tl4_pe *style, const tl4_pe *strings, tl4_v4_st
 
     /* R-PE-8: the version-4 path accepts no file with a multi-language pair (its accepted set is unchanged) */
     if (style->nmulti_pairs != 0 || (strings && strings->nmulti_pairs != 0)) { st = TL4_E_RSRC_LANGUAGES; goto fail; }
+
+    /* R-RES-8: every block of both string tables passes the shape check before any reference is resolved */
+    if ((st = tl4_strings_check(style, &ss)) != TL4_OK) goto fail;
+    if (strings && (st = tl4_strings_check(strings, &ss)) != TL4_OK) goto fail;
 
     /* R-V4-1 */
     t = tl4_res_ascii("PACKTHEM_VERSION"); n = tl4_res_id(1);

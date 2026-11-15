@@ -31,6 +31,70 @@ static int write_file(const char *dir, const char *sub, const char *name, const 
     return 0;
 }
 
+/* fuzz_strings (R-RES-8, S2): a 12-byte query header (string id, explicit language, mode, split) then one image, or
+ * the style followed by its strings module at `split`. The shapes Jim 2 asked for on 2026-11-15. */
+static void strings_header(uint8_t *h, uint32_t id, uint32_t language, uint32_t explicit_language, uint32_t split)
+{
+    memset(h, 0, 12);
+    h[0] = (uint8_t)id; h[1] = (uint8_t)(id >> 8);
+    h[2] = (uint8_t)language; h[3] = (uint8_t)(language >> 8);
+    h[4] = (uint8_t)explicit_language;
+    h[8] = (uint8_t)split; h[9] = (uint8_t)(split >> 8); h[10] = (uint8_t)(split >> 16); h[11] = (uint8_t)(split >> 24);
+}
+
+static int strings_seeds(const char *dir)
+{
+    static const char *const sixteen[16] = {"s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12", "s13", "s14", "s15"};
+    static uint8_t blk[256], blk1024[2 * 16 + 2 * 1024], buf[12 + 2 * 64 * 1024];
+    static pb_res many[64];
+    pb_options o32 = {0, 0, 0, 0};
+    pb_res r, two[2], none = {NULL, 10, NULL, 1, 0, blk, 1};
+    v4f_parts parts;
+    uint32_t n, i;
+    size_t size, size2;
+    int rc = 0;
+
+    n = v4b_string_block(blk, sizeof(blk), sixteen);
+    r.type_name = NULL; r.type_id = 6; r.name_name = NULL; r.name_id = 1; r.language = 1033; r.data = blk; r.size = n;
+    size = pb_build(&r, 1, &o32, buf + 12, sizeof(buf) - 12, NULL); strings_header(buf, 3, 0, 0, 0);
+    rc |= !size || write_file(dir, "strings", "valid.bin", buf, 12 + size);
+    two[0] = r; two[1] = r; two[1].language = 1031;
+    size = pb_build(two, 2, &o32, buf + 12, sizeof(buf) - 12, NULL); strings_header(buf, 5, 1033, 1, 0);
+    rc |= !size || write_file(dir, "strings", "two_languages.bin", buf, 12 + size);
+    for (i = 0; i < 64; i++) { many[i] = r; many[i].language = i; }
+    size = pb_build(many, 64, &o32, buf + 12, sizeof(buf) - 12, NULL); strings_header(buf, 0, 40, 1, 0);
+    rc |= !size || write_file(dir, "strings", "languages_64.bin", buf, 12 + size);
+    /* one string of exactly 1,024 code units in slot 0 of block 2 (id 16), the other slots empty */
+    memset(blk1024, 0, sizeof(blk1024));
+    blk1024[0] = 0x00; blk1024[1] = 0x04;
+    for (i = 0; i < 1024; i++) { blk1024[2 + 2 * i] = 'a'; blk1024[3 + 2 * i] = 0; }
+    r.name_id = 2; r.data = blk1024; r.size = (uint32_t)sizeof(blk1024);
+    size = pb_build(&r, 1, &o32, buf + 12, sizeof(buf) - 12, NULL); strings_header(buf, 16, 0, 0, 0);
+    rc |= !size || write_file(dir, "strings", "chars_1024.bin", buf, 12 + size);
+    r.name_id = 1; r.data = blk; r.size = n - 1;
+    size = pb_build(&r, 1, &o32, buf + 12, sizeof(buf) - 12, NULL); strings_header(buf, 15, 0, 0, 0);
+    rc |= !size || write_file(dir, "strings", "short.bin", buf, 12 + size);
+    blk[n] = 0; r.size = n + 1;
+    size = pb_build(&r, 1, &o32, buf + 12, sizeof(buf) - 12, NULL); strings_header(buf, 15, 0, 0, 0);
+    rc |= !size || write_file(dir, "strings", "long.bin", buf, 12 + size);
+    r.size = n; r.name_id = 4096;
+    size = pb_build(&r, 1, &o32, buf + 12, sizeof(buf) - 12, NULL); strings_header(buf, 65535, 0, 0, 0);
+    rc |= !size || write_file(dir, "strings", "block_4096.bin", buf, 12 + size);
+    r.name_id = 4097;
+    size = pb_build(&r, 1, &o32, buf + 12, sizeof(buf) - 12, NULL); strings_header(buf, 65535, 0, 0, 0);
+    rc |= !size || write_file(dir, "strings", "block_4097.bin", buf, 12 + size);
+    size = pb_build(&none, 1, &o32, buf + 12, sizeof(buf) - 12, NULL); strings_header(buf, 0, 0, 0, 0);
+    rc |= !size || write_file(dir, "strings", "no_strings.bin", buf, 12 + size);
+    /* the style (inline block 32) followed by a module with block 1: id 5 is absent in the style and found in the module */
+    v4f_default(&parts);
+    size = v4f_build(&parts, buf + 12, sizeof(buf) - 12);
+    r.name_id = 1;
+    size2 = size ? pb_build(&r, 1, &o32, buf + 12 + size, sizeof(buf) - 12 - size, NULL) : 0;
+    strings_header(buf, 5, 0, 0, (uint32_t)size);
+    rc |= !size || !size2 || write_file(dir, "strings", "pair.bin", buf, 12 + size + size2);
+    return rc;
+}
+
 int main(int argc, char **argv)
 {
     static const uint8_t version4[2] = {4, 0};
@@ -156,6 +220,7 @@ int main(int argc, char **argv)
     prefixed[0] = 4; prefixed[1] = 5; memcpy(prefixed + 2, image, n);                          rc |= !n || write_file(dir, "v4_blob", "strings.bin", prefixed, 2 + n);
 
     if (rc) { fprintf(stderr, "mkseeds: failed\n"); return 1; }
-    printf("mkseeds: 27 seeds written under %s\n", dir);
+    rc |= strings_seeds(dir);
+    printf("mkseeds: 37 seeds written under %s\n", dir);
     return 0;
 }
