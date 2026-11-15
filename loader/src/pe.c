@@ -489,7 +489,11 @@ static int count_cb(const tl4_resource *res, void *context)
 tl4_status tl4_pe_count_type(const tl4_pe *pe, const tl4_res_name *type, uint32_t *count)
 {
     struct walk_counts counts = {0, 0, 0};
+    uint32_t n = 0;
+    tl4_status st;
+    if (count) *count = 0;
     if (!pe || !pe->base || !type || !count) return TL4_E_ARG;
-    *count = 0;
-    return walk(pe, type, 0, count_cb, count, 0, &counts);
+    st = walk(pe, type, 0, count_cb, &n, 0, &counts);
+    if (st == TL4_OK) *count = n;   /* R-GEN-5: a failed call reports no partial count */
+    return st;
 }

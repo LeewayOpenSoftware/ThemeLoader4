@@ -156,7 +156,9 @@ static void test_failed_open_clears(void)
     CHECK(pe.nresources == 0 && pe.nentries == 0 && pe.ndirectories == 0);
     CHECK_STATUS(tl4_pe_find(&pe, &t, &nm, &r), TL4_E_ARG);
     CHECK_STATUS(tl4_pe_enum(&pe, enum_cb, &cnt, &stopped), TL4_E_ARG);
+    cnt = 5;
     CHECK_STATUS(tl4_pe_count_type(&pe, &t, &cnt), TL4_E_ARG);
+    CHECK(cnt == 0);                                  /* a failed count reports zero, not a partial value */
     /* an early failure too */
     memcpy(copy_, image, n);
     copy_[0] = 'X';
