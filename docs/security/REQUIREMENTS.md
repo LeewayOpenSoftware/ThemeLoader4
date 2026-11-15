@@ -50,7 +50,7 @@ This is the single normative list for Theme Loader 4. A milestone is not accepte
 | Id | Requirement |
 |---|---|
 | R-V4-1 | MUST: `PACKTHEM_VERSION` is exactly 2 bytes with value 4. Other values are not this loader's input. |
-| R-V4-2 | MUST: `CMAP` has even size; every name is NUL-terminated inside the resource; a class name has at most one `::`, both halves are non-empty and at most 59 characters; duplicate names are a reject. The class id is the ordinal of the n-th non-empty name. |
+| R-V4-2 | MUST: `CMAP` has even size; every name is NUL-terminated inside the resource; a class name has at most one `::`, both halves are non-empty and at most 59 characters. The class id is the ordinal of the n-th non-empty name. A name may occur more than once (three reference styles of one third-party family repeat `TaskbandExtendedUI`; they are published as working Windows styles, which we have not tested): records and `BCMAP` address classes by ordinal, so every ordinal stays valid, and a lookup by name returns the lowest ordinal with that name. The validator does not search for duplicates (R-V4-14); the model builder counts them when it builds its name index. |
 | R-V4-3 | MUST: `VMAP` is three length-prefixed strings, each inside the resource and at most 64 characters. The sketch states whether the prefix counts bytes or characters before L1 is written. |
 | R-V4-4 | MUST: record walk over `VARIANT` and `RMAP`: 32-byte headers, 8-byte alignment, and the walk ends exactly at the resource size (or exactly at `ALIGN8(size)` if the corpus shows unaligned sizes; the sketch states which). Leftover bytes that are not a whole record are a reject. |
 | R-V4-5 | MUST: header fields: `nameId` 1..65,535; `typeId` 200..255; `classId < CMAP count`; `partId` and `stateId` 0..255; the seventh field is not interpreted and never read into a decision (it is 0 in every record of the two stock styles; 20 of the 30 third-party styles carry other values there in about 2,450 reference and 100 inline records, corpus run 2026-11-15); `cbData <= 65,536` and inside the resource. Any field outside its range is a reject. |
@@ -62,6 +62,7 @@ This is the single normative list for Theme Loader 4. A milestone is not accepte
 | R-V4-11 | MUST: resources this loader does not use (`AMAP`, `PVL`, `IMMERSIVE`, `DESKTOP`, anything unknown) are not parsed. They count toward the file limits only. |
 | R-V4-12 | MUST: the validator returns the counts (classes, part-states, properties, dropped records by reason). More than 1% of records dropped for an unresolved reference, or any unresolved FONT reference, is a reject. |
 | R-V4-13 | MUST: the corpus runner shows that all reference styles validate under these limits and reports the maxima. A limit that a reference style exceeds is raised here by commit, not in code. |
+| R-V4-14 | MUST: validation cost is bounded at the limits of section 6. No step re-walks a map or a resource directory once per item: a reference is resolved by a search that uses the strict order of R-PE-8 (logarithmic in the directory), not by a linear walk per record, and no check compares every pair of names by re-reading the map from its start. A generated style at the limits (32,768 records that each carry a reference, 4,096 images, a 256 KB `CMAP`) validates inside the fuzz timeout of the S1 plan, and a test shows it. |
 
 ## 5. Property model, strings, images (milestones L2, L3)
 
@@ -185,7 +186,7 @@ Sections 1, 2 and 8 apply to `directui/` as they stand. Corpus figures are from 
 
 - R-V4-3, R-V4-4: two format facts the sketch must state (VMAP prefix unit, walk end on unaligned sizes).
 - R-V4-10: `BCMAP` semantics: VERIFIED in the sketch (count + one base ordinal per class, shifted by the descriptor names; acyclic, depth at most 6 in the corpus); the L1 validator enforces the rule.
-- R-V4-2: three reference styles (the Aero10 Metro family) repeat one class name, `TaskbandExtendedUI`, and are rejected by the duplicate rule alone (corpus run 2026-11-15). Open ruling: keep the reject (those files are unsupported) or accept a duplicate with "first ordinal wins", which the ordinal-based class ids make deterministic.
+- R-V4-2: that the lowest ordinal wins a lookup by name is our rule; which duplicate Windows uses is a HYPOTHESIS, not measured. If a later measurement shows the other one, the rule changes here by commit.
 - R-RES-3: the allowed IHDR set must be confirmed on the corpus (colour types and interlace actually used).
 - R-PE-8: strict ordering must be confirmed on the corpus by the L0 corpus run; if a reference style is unordered, the rule becomes "linear scan, first match" by commit here.
 - Record types 240, 241, 243 and the records with a non-zero reference on value types are dropped by R-V4-8 until the sketch explains them.
