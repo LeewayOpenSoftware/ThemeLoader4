@@ -14,10 +14,10 @@ A resource-only PE mapped with `LOAD_LIBRARY_AS_DATAFILE` (keep it that way; Jim
 |---|---|---|
 | `PACKTHEM_VERSION` / #1 | 2 bytes = 4 | selects the v4 path (3 keeps the INI path) |
 | `CMAP` / `CMAP` | 11-19 KB | UTF-16 class names, each zero-terminated and padded to 8 bytes; the ordinal of the n-th non-empty string is the `classId` used by the records. 252-374 names; longest 54 chars; 152-270 of them are `App::Class` names (one `::` only) |
-| `VMAP` / `VMAP` | 76 bytes | three length-prefixed UTF-16 strings: variant (`Normal`), size (`NormalSize`), color (`NormalColor`); the only variant in every file |
+| `VMAP` (`VMAP`) | 76 bytes | three strings, each a 32-bit prefix counting UTF-16 **characters including the terminating NUL**, then the UTF-16 text, then padding to a 4-byte boundary (VERIFIED on the 32 files: 7 `Normal`, 11 `NormalSize`, 12 `NormalColor` = 20 + 28 + 28 = 76 bytes): variant, size, color; the only variant in every file (R-V4-3) |
 | `RMAP` / `RMAP` | ~0.5 KB | property records (1.2) at class 0: 600 display name, 601-608 documentation strings |
 | `VARIANT` / `NORMAL` | 246-449 KB | the property records of the whole style (1.2) |
-| `BCMAP` / `BCMAP` | int32 array | base-class map: one entry per CMAP class (HYPOTHESIS; not decoded, section 5) |
+| `BCMAP` (`BCMAP`) | 4 + 4 x N bytes | **VERIFIED** (32 files): a uint32 count N followed by N uint32 entries, N = CMAP count minus the leading descriptor names (`documentation`, `sizevariant.*`, `colorvariant.*`: 3 or 4). Entry j belongs to the class with CMAP ordinal j + (CMAP count - N); its value is `0xFFFFFFFF` (no base) or the base class in the same shifted ordinal space (base ordinal = value + CMAP count - N). Bases are `App::Class` -> `Class`, `Class` -> `ClassStyle`, `DarkMode_X::C` -> `X::C` and the like. No cycle in any file; longest chain 6 (limit 8, R-V4-10) |
 | `AMAP` / `AMAP` | binary | animations (HYPOTHESIS; not needed to draw static parts) |
 | `IMAGE` / #508… | 567-1611 PNGs | part images, by numeric id |
 | `STREAM` / 3 ids | 57-345 KB PNGs | atlas images, by numeric id |
@@ -41,7 +41,7 @@ struct V4Record {           // 32 bytes, records are 8-byte aligned
 };
 ```
 
-Walk: `off = 0; while (off + 32 <= size) { read header; off += 32; if (reference == 0) off += cbData; off = ALIGN8(off); }`. The reference field means: FONT → string id of the font string; FILENAME → IMAGE resource id; DISKSTREAM → STREAM resource id; a handful of RECT/BOOL/type-243 records → unknown table (section 5). Record order in the files: `globals` first, then classes in CMAP order, parts and states grouped; the reader must not rely on it beyond "a class's records are contiguous" (HYPOTHESIS; the current INI loader does not rely on order either).
+Walk: `off = 0; while (off + 32 <= size) { read header; off += 32; if (reference == 0) off += cbData; off = ALIGN8(off); }` and the walk must end exactly at `size`: every `VARIANT` and every `RMAP` in the 32 files has a size that is a multiple of 8 and is consumed to the last byte (VERIFIED), so leftover bytes are a reject (R-V4-4). The reference field means: FONT -> string id of the font string; FILENAME -> IMAGE resource id; DISKSTREAM -> STREAM resource id; a handful of RECT/BOOL/type-243 records -> unknown table (section 5); it is never an offset, index or length (R-V4-7). Record order in the files: `globals` first, then classes in ascending CMAP order (VERIFIED for stock aero: the first record of each class appears in ascending class id), parts and states grouped; the reader must not rely on it (the current INI loader does not rely on order either).
 
 ### 1.3 Primitive types in the corpus and the inline encodings
 
@@ -91,7 +91,7 @@ The decisive point: **`THEME_PROPERTY` holds the value as INI text** (`lpValue` 
 4. **FONT**: `MSSTYLES_GetPropertyFont` (msstyles.c:1795) parses `"name, size, Bold, Italic, Underline, Quality:ClearType"`-style text today; for v4 it loads string `reference` from the module (`LoadStringW(hTheme, id)`, which follows MUI for the stock files and reads the inline `#6` table otherwise) and feeds that text to the existing parser. The strings in the corpus are exactly in the syntax the v3 INI uses (VERIFIED: `Segoe UI, 9, Quality:ClearType`, `Segoe UI, 9, Bold, Quality:ClearType`, `Segoe UI, 12, Underline, Quality:ClearType`).
 5. **FILENAME / IMAGE**: `MSSTYLES_LoadBitmap` keys the cache by name; a v4 FILENAME record gives an IMAGE **id**. Minimal change: a second lookup path by `MAKEINTRESOURCEW(reference)` on type `IMAGE` into the same PNG loader (`MSSTYLES_TryLoadPng` msstyles.c:1622, `pngsup.cpp`), cache key = synthetic name `#<id>` or an id field in `THEME_IMAGE`. The draw code (`draw.c`) asks for `TMT_IMAGEFILE`, `TMT_IMAGEFILE1..7`, `TMT_GLYPHIMAGEFILE` through `MSSTYLES_FindProperty(TMT_FILENAME, id)` then `MSSTYLES_LoadBitmap(tc, text)`; with (b) it passes the reference instead.
 6. **DISKSTREAM / STREAM**: the three atlases are PNGs too; same PNG loader on type `STREAM`. Which properties reference them (`TMT_ATLASIMAGE` 8000, `TMT_ATLASINPUTIMAGE` 8001, `TMT_ATLASRECT` 8002 exist in our `vssym32.h`) and how `draw.c` would use an atlas rectangle is new drawing work, not loader work; the loader only has to resolve the id.
-7. **BCMAP** (HYPOTHESIS): one base-class index per class. Today the chain is built by name (`App::Class` → the class without app → `globals`, msstyles.c:1150-1168, the lookups in `MSSTYLES_FindPartState` msstyles.c:564-590). If `BCMAP` encodes exactly that relation it is redundant; if it encodes other bases (e.g. `DarkMode_Explorer::ListView` → `Explorer::ListView`), it is the override chain the v4 path should install. Decoding it against the known name relations is the first open item (section 5).
+7. **BCMAP** (VERIFIED, section 1.1): one base-class ordinal per class in the shifted ordinal space, no base = `0xFFFFFFFF`. It encodes more than the name relation the INI loader derives (`App::Class` -> `Class` -> `globals`, msstyles.c:1150-1168): `Class` -> `ClassStyle` (`Button` -> `ButtonStyle`, `Edit` -> `EditStyle`, `ControlPanel` -> `ControlPanelStyle`), `DarkMode_X::C` -> `X::C`, and chains up to 6 long. The v4 path installs this chain as the override list and `MSSTYLES_FindPartState` walks it; R-V4-10's acyclicity and depth check (8) hold on every reference file.
 8. **Colour and size names**: `VMAP` gives `NormalColor`/`NormalSize`; the registry `ThemeManager` `ColorName`/`SizeName` written by the theme applier must match them (today the v3 win8 style uses `Normal Color`/`Normal Size`, VERIFIED in the lab probe's `GetCurrentThemeName` line). No other variant exists in any file, so the colour/size selection code stays trivial.
 9. **Unknown types and ids**: record types 240, 241, 243 and property ids 5100-5146 do not exist in our headers; the reader must skip them by `cbData` (bounded, section 3) and count them; they must never abort the load (the stock aerolite has 801 of them). Properties with ids above `TMT_RESERVEDHIGH` 7999 other than the three atlas ids: none in the corpus.
 
@@ -101,46 +101,47 @@ The decisive point: **`THEME_PROPERTY` holds the value as INI text** (`lpValue` 
 - Drawing features the records describe but `draw.c` does not implement are Stanley's inventory (02), not the loader's: atlas images (8000-8002), `TMT_TRANSITIONDURATIONS` 6000 / animations (`AMAP`), per-DPI image variants (`TMT_IMAGEFILE1..7` + `TMT_MINDPI1..7` are in `vssym32.h` and our `draw.c` already handles `IMAGESELECTTYPE` for v3), `DWMWindow`/`DWMPen`/`DWMTouch` classes (nothing in user mode reads them; they are the compositor's input).
 - `shellstyle.dll`/DUI: out of scope for uxtheme (01 section 6).
 
-## 3. Validation limits (Jim 2's 04 section 5, items 4 and 11-13, made concrete)
+## 3. Validation limits
 
-Numbers are the corpus maxima (VERIFIED over the 32 files) with headroom; the limits are the proposal, the maxima are the measurements. Everything is **reject, not truncate**, and a rejected style leaves the process unthemed (04 rule 5).
+**Normative limits live in `docs/security/REQUIREMENTS.md` section 6 and win over this table** (owner order 2026-11-15). The table keeps the corpus maxima (VERIFIED over the 32 files) and quotes the normative limit next to each; the earlier proposals that REQUIREMENTS tightened are gone. Everything is **reject, not truncate**, and a rejected style leaves the process unthemed (R-POL-4).
 
-| quantity | corpus maximum | proposed limit | check |
+| quantity | corpus maximum | normative limit (REQUIREMENTS section 6) | check |
 |---|---|---|---|
-| file size | 2,976,256 bytes (aero10_vista_TBMod) | 32 MB | before `LoadLibraryEx`, from the file |
+| file size | 2,976,256 bytes (aero10_vista_TBMod) | 32 MB | from the mapping handle (R-POL-2); sections 1..32 (corpus 4) |
 | resource offset + size | — | must lie inside the mapped image, and inside the `.rsrc` section (04 P8) | every resource, before the first read |
 | `PACKTHEM_VERSION` | 2 bytes | exactly 2 bytes, value 3 or 4 | as today (msstyles.c:127-138) |
-| `CMAP` size / count / name length | 18,760 bytes / 374 / 54 chars | 256 KB / 4,096 names / 59 chars (`MAX_THEME_CLASS_NAME` 60 incl. the terminator, after the `::` split both halves must fit) | UTF-16 even size; each string terminated inside the resource; at most one `::` |
-| `VMAP` | 76 bytes | 3 length-prefixed strings, each ≤ 64 chars, total within the resource | |
-| `VARIANT` size / record count | 449,072 bytes / 11,096 | 8 MB / 131,072 | walk must end exactly at the resource end (every file in the corpus does); any record header beyond the end → reject |
-| record `typeId` | 200-243 | 200 ≤ typeId ≤ 255; unknown types skipped by `cbData` | |
+| `CMAP` size / count / name length | 18,760 bytes / 374 / 54 chars | 256 KB / 1,024 names / 59 chars per half (`MAX_THEME_CLASS_NAME` 60 incl. the terminator) | UTF-16 even size; each string terminated inside the resource; at most one `::`, both halves non-empty; duplicates rejected (R-V4-2) |
+| `VMAP` | 76 bytes | 3 strings, each <= 64 chars; prefix = characters incl. NUL, 4-byte padded (section 1.1) | R-V4-3 |
+| `VARIANT` size / record count | 449,072 bytes / 11,096 | 2 MB / 32,768 | walk ends exactly at the resource size (every file in the corpus does; sizes are multiples of 8); leftover bytes -> reject (R-V4-4) |
+| record `typeId` | 200-243 | 200 <= typeId <= 255; unknown types skipped by their checked `cbData`, dropped and counted (R-V4-8) | all header fields read unsigned and range-checked; `reserved == 0`; `nameId` 1..65,535 (R-V4-5, R-GEN-4) |
 | record `classId` | < 374 | `< CMAP count` | |
 | `partId`, `stateId` | 94, 20 | 0..255 each (the draw code indexes nothing by them, but `IsThemePartDefined` and the part tables assume small ints) | |
-| `cbData` (inline) | 1,608 (INTLIST) | ≤ 65,536 and `off + 32 + cbData ≤ size` (no overflow: compute in 64 bits or check `cbData ≤ size - off - 32`) | per type: INT/BOOL/ENUM/COLOR/SIZE 4; POSITION 8; RECT/MARGINS 16; INTLIST `4 + 4*count` with `count ≤ 1,024`; STRING even and ≤ 4,096 bytes; FONT logical 92 |
-| reference ids | FONT 496-507, IMAGE #508-#2125, STREAM 3 ids | the referenced resource/string must exist, else the property is dropped and counted; more than 1% dropped (or any dropped FONT) → reject (HYPOTHESIS on the threshold) | resolved at load, not at draw |
-| `IMAGE`/`STREAM` count | 1,611 / 3 | 8,192 / 64 | |
-| image dimensions | 1,357 x 3,720 (single image), 6.48 Mpixels total per style | ≤ 8,192 per side, ≤ 16 Mpixels per image, ≤ 64 Mpixels decoded per style (decoded on demand but counted against the budget) | from the PNG IHDR before decoding (04 rule 13); only PNG (signature check) for `IMAGE`/`STREAM`, no BMP in v4 |
-| string table | font strings ≤ 40 chars | `LoadStringW` into a 256-char buffer, reject longer | |
+| `cbData` (inline) | 1,608 (INTLIST, count 401) | <= 65,536 and `off + 32 + cbData <= size` in 64 bits | exact per type: INT/BOOL/ENUM/COLOR/SIZE 4; POSITION 8; RECT/MARGINS 16; INTLIST `4 + 4*count` with `count <= 402` (the caller's `INTLIST` capacity); STRING even, <= 4,096 bytes, last character NUL; FONT logical 92 (R-V4-6) |
+| reference ids | FONT 496-507, IMAGE #508-#2125, STREAM 3 ids | an identifier only, resolved through the bounded reader; unresolved -> the property is dropped and counted; more than 1% dropped, or any dropped FONT -> reject (R-V4-7, R-V4-12) | resolved at load, not at draw |
+| `IMAGE`/`STREAM` count | 1,611 / 3 | 4,096 / 16 | |
+| image dimensions | 1,357 x 3,720 (single image), 6.48 Mpixels total per style | <= 8,192 per side, <= 8 Mpixels per image, <= 4 MB compressed, <= 16 Mpixels decoded per style per process | from the PNG IHDR before decoding (R-RES-4); PNG only (R-RES-5). IHDR set VERIFIED on all 30,171 images of the 32 files: bit depth 8, colour type 6 (RGBA, 26,729) or 2 (RGB, 3,442), compression 0, filter 0, interlace 0, which is exactly R-RES-3's allowed set |
+| string table | font strings <= 40 chars | read with the bounded reader, no MUI redirection; a font string <= 255 chars, face <= 31 (R-RES-1, R-RES-2) | |
 | metrics applied to the system | fonts 9-12 pt, sizes small | clamp every size/margin/count and font height before `SystemParametersInfo` (04 rule 7); same clamps as the v3 path should get | |
-| classes / part-states / properties allocated | 374 / ~2,000 / 11,096 | 4,096 / 65,536 / 131,072 | counted during the walk, before allocation |
+| classes / part-states / properties allocated | 374 / ~2,000 / 11,096 | 1,024 / 8,192 / 32,768 | counted during the walk, before allocation (R-GEN-7); the model builder must not search a list per record (R-MOD-1) |
 
 Also from 04: load as data only (rule 3), crash mark before parsing (rule 6), fail closed (rule 5), and the install-time validation in a throwaway low-privilege process with the same parser (rule 8) are policy that applies to both the v3 and v4 paths; a fuzzing harness for the walker above (rule 14) is cheap because the walker is ~100 lines with no allocations until validation passes.
 
 ## 4. Suggested validation of the sketch itself (no implementation)
 
-1. Decode `BCMAP` against the class-name relations (section 5, item 1) with the existing dumper; if it matches the name-derived chain, item 2.2.7 collapses.
+1. ~~Decode `BCMAP`~~ done (section 1.1): it is the override chain, richer than the name relation, acyclic, depth <= 6.
 2. Draw-by-hand check: take `Button` part 1 (PUSHBUTTON) state 1 in stock aero, resolve its `TMT_IMAGEFILE`/`IMAGECOUNT`/`SIZINGMARGINS`/`CONTENTMARGINS` records from the dump, open the referenced PNG and confirm the record values describe the image strip (VERIFIED possible on the host without running any Windows code; turns the RECT/MARGINS field order from HYPOTHESIS to VERIFIED).
 3. Host reference (needs the owner's OK): `GetThemeDefaults`/`OpenThemeDataEx`+`GetThemeColor`/`GetThemeMargins` on the host for the same (class, part, state, property) tuples to compare with the dump values.
 4. Jim 2 reviews section 3 against 04; Stanley maps 2.3 onto 02's feature table.
 
 ## 5. Open items
 
-1. `BCMAP` semantics (int32 per class; HYPOTHESIS base-class index).
+1. ~~`BCMAP` semantics~~ resolved (section 1.1, VERIFIED on the 32 files).
 2. The reference field on 10 RECT + 1 BOOL records (stock aero) and 12 type-243 records (aerolite): which table they point into.
 3. Types 240/241/243 and property ids 5100-5146 (high-contrast / Win11 additions, HYPOTHESIS).
 4. `AMAP`, `PVL`, `IMMERSIVE`, `DESKTOP` contents (not needed to draw static parts).
 5. The signature trailer policy (01 section 2.6; Jim 2's 04 section 4): the v4 reader must not depend on it, the install policy decides.
 6. Whether `MSSTYLES_LoadBitmap`'s name cache or a parallel id cache is used for v4 images (implementation detail flagged for the reviewer).
+7. Resource-directory ordering and languages (R-PE-8), measured on all 59 PE files of the inputs (32 styles, 11 shellstyle DLLs, 16 .mui): 0 ordering violations (names before ids, both strictly ascending), 0 styles with more than one language entry per (type, name); one third-party `shellstyle.dll` (Aero11 Seven) carries two language entries for `UIFILE` #1 and would be rejected by R-PE-8. Maximum entries in one directory 1,611, longest name 20 characters, at most 4 sections. The L0 reader enforces the rule as written.
 
 ## 6. Evidence
 
