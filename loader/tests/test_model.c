@@ -297,6 +297,60 @@ static void hook_long_name(const uint8_t *data, size_t size)
         for (i = 0; i < r.size; i++) ((uint8_t *)(uintptr_t)r.data)[i] = (uint8_t)(i & 1 ? 0 : 'A');   /* one unterminated name */
     }
 }
+/* The refusals of the build's second pass (R-MOD-5), each reached through the hook with bytes that still validate */
+static void hook_more_records(const uint8_t *data, size_t size)
+{
+    /* the VARIANT keeps its size but holds header-only FILENAME records (32 bytes) and one inline record to end exactly
+     * on the size: more records than the sizing pass counted -> the record capacity refusal */
+    tl4_pe p; tl4_resource r; tl4_res_name t = tl4_res_ascii("VARIANT"), n = tl4_res_ascii("NORMAL");
+    static const uint8_t margins[16] = {1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0};
+    hook_calls++;
+    if (tl4_pe_open(data, size, &p) == TL4_OK && tl4_pe_find(&p, &t, &n, &r) == TL4_OK && r.size >= 64)
+    {
+        uint8_t *v = (uint8_t *)(uintptr_t)r.data;
+        uint32_t off = 0, k = 0, rem;
+        while (r.size - off > 48) off = v4b_record(v, r.size, off, 3001 + k++, 206, 3, 0, 0, 508, 0, 0);
+        rem = r.size - off;
+        if (rem == 32) off = v4b_record(v, r.size, off, 3001 + k, 206, 3, 0, 0, 508, 0, 0);
+        else if (rem == 40) off = v4b_record(v, r.size, off, 3804, 204, 3, 0, 0, 0, margins, 4);
+        else off = v4b_record(v, r.size, off, 3601, 205, 3, 0, 0, 0, margins, 16);
+        if (off != r.size) hook_calls += 1000;                               /* the layout did not end on the size */
+    }
+}
+static void hook_more_names(const uint8_t *data, size_t size)
+{
+    /* the last name, "Explorer::Button" (40 bytes with its padding), becomes "Ex" and "Button": seven names where
+     * the sizing pass counted six -> the class-map count refusal */
+    tl4_pe p; tl4_resource r; tl4_res_name t = tl4_res_ascii("CMAP");
+    static const char *const two[] = {"Ex", "Button"};
+    hook_calls++;
+    if (tl4_pe_open(data, size, &p) == TL4_OK && tl4_pe_find(&p, &t, &t, &r) == TL4_OK && r.size >= 40)
+    {
+        uint8_t *c = (uint8_t *)(uintptr_t)r.data + r.size - 40;
+        memset(c, 0, 40);
+        if (v4b_cmap(c, 40, two, 2) == 0) hook_calls += 1000;
+    }
+}
+static void hook_more_partstates(const uint8_t *data, size_t size)
+{
+    /* every VARIANT record gets its own state: 14 part-states where the sizing pass counted 6 runs -> the part-state
+     * capacity refusal; the records stay valid (states 10..23) */
+    tl4_pe p; tl4_resource r; tl4_res_name t = tl4_res_ascii("VARIANT"), n = tl4_res_ascii("NORMAL");
+    hook_calls++;
+    if (tl4_pe_open(data, size, &p) == TL4_OK && tl4_pe_find(&p, &t, &n, &r) == TL4_OK)
+    {
+        uint8_t *v = (uint8_t *)(uintptr_t)r.data;
+        uint32_t off = 0, k = 0;
+        while (off + 32 <= r.size)
+        {
+            uint32_t reference = pb_get32(v + off + 20), cb = pb_get32(v + off + 28);
+            put32(v + off + 16, 10 + k++);
+            off += 32 + (reference ? 0 : cb);
+            off = (off + 7u) & ~7u;
+        }
+    }
+}
+
 static void test_between_passes(void)
 {
     v4f_default(&parts);
@@ -308,9 +362,16 @@ static void test_between_passes(void)
     v4f_default(&parts);
     tl4_model_test_between_passes = hook_long_name;
     CHECK_STATUS(build(), TL4_E_V4_CMAP); CHECK(hook_calls == 3 && model.classes == 0);
+    /* the three capacity refusals of the second pass, each on bytes that validate on their own */
+    v4f_default(&parts); tl4_model_test_between_passes = hook_more_records;
+    CHECK_STATUS(build(), TL4_E_MODEL_SIZE); CHECK(hook_calls == 4 && model.classes == 0 && model.nprops == 0);
+    v4f_default(&parts); tl4_model_test_between_passes = hook_more_names;
+    CHECK_STATUS(build(), TL4_E_MODEL_SIZE); CHECK(hook_calls == 5 && model.classes == 0);
+    v4f_default(&parts); tl4_model_test_between_passes = hook_more_partstates;
+    CHECK_STATUS(build(), TL4_E_MODEL_SIZE); CHECK(hook_calls == 6 && model.classes == 0);
     tl4_model_test_between_passes = 0;
     v4f_default(&parts);
-    CHECK_STATUS(build(), TL4_OK); CHECK(hook_calls == 3);
+    CHECK_STATUS(build(), TL4_OK); CHECK(hook_calls == 6);
     /* a property that is not the model's own is refused by every getter */
     {
         tl4_prop foreign; int32_t v; uint32_t c, id, off, size, n; uint16_t str[8]; tl4_font f;
