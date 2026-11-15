@@ -112,6 +112,10 @@ build(const SID_T *owner, int dacl, const ACE_T *aces, uint32_t n)
 #define T_FILE TL4_TRUST_FILE
 #define T_DIR TL4_TRUST_DIR
 #define T_ABOVE TL4_TRUST_DIR_ABOVE_ROOT
+#define T_KEY TL4_TRUST_KEY
+#define KA 0x000F003Fu   /* KEY_ALL_ACCESS */
+#define KR 0x00020019u   /* KEY_READ = STANDARD_RIGHTS_READ | query value | enumerate sub keys | notify */
+#define KW 0x00020006u   /* KEY_WRITE = STANDARD_RIGHTS_WRITE | set value | create sub key */
 #define TI_OK TL4_TRUST_COMPONENT_OWNER_TRUSTED
 
 static tl4_trust_reason w(size_t n, enum tl4_trust_object o, unsigned f) { return tl4_trust_sd_writable(sdbuf, n, o, f); }
@@ -286,6 +290,100 @@ test_writable(void)
     CHECK(tl4_trust_write_mask((enum tl4_trust_object)7) == 0xFFFFFFFFu);
 }
 
+/* T-DEF-1 for registry keys (policy v6; I1a-T review MUST 1): the key rights decide, and KEY_READ, which carries the
+ * notify right 0x10 (a file's FILE_WRITE_EA bit), is not a write grant. */
+static void
+test_writable_key(void)
+{
+    size_t n;
+    SID_T ba = BA, sy = SY, ti = TI, user = USER;
+
+    CHECK(tl4_trust_write_mask(T_KEY) == (0x2u | 0x4u | 0x20u | 0x10000u | 0x40000u | 0x80000u | 0x2000000u |
+                                           0x10000000u | 0x40000000u));
+    CHECK((tl4_trust_write_mask(T_KEY) & 0x10u) == 0);                 /* KEY_NOTIFY */
+    CHECK((tl4_trust_write_mask(T_KEY) & KR) == 0);                    /* nothing of KEY_READ */
+    CHECK((tl4_trust_write_mask(T_DIR) & 0x10u) != 0);                 /* the bit the file masks do count (MUST 1) */
+
+    /* the gate key HKLM\SOFTWARE\Leeway\UxTheme as the integration applies it (LiberNT feat/uxtheme-trust-gate,
+     * dll/win32/uxtheme/trust.c UXT_GATE_SDDL): O:BAG:SYD:PAI(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;BU); the
+     * container-inherit entries are effective on the key itself */
+    {
+        ACE_T a[] = { { 0, CI, KA, SY }, { 0, CI, KA, BA }, { 0, CI, KR, BU } };
+        n = build(&ba, 1, a, N(a));
+        CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_SAFE);
+        CHECK_EQ(w(n, T_DIR, 0), TL4_TRUST_W_GRANT);                 /* the directory mask refuses it: the MUST 1 bug */
+        CHECK_EQ(w(n, T_FILE, 0), TL4_TRUST_W_GRANT);
+        n = build(&sy, 1, a, N(a));
+        CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_SAFE);
+        n = build(&ti, 1, a, N(a));
+        CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_W_OWNER);                 /* owner rules are the same for a key */
+        CHECK_EQ(w(n, T_KEY, TI_OK), TL4_TRUST_SAFE);
+        n = build(&user, 1, a, N(a));
+        CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_W_OWNER);
+    }
+    /* the hive's default SOFTWARE descriptor shape: CREATOR OWNER with full control, effective on the key, is a
+     * grant to an ordinary principal (writable); the same entry inherit-only is not effective */
+    {
+        ACE_T a[] = { { 0, CI, KA, SY }, { 0, CI, KA, BA }, { 0, CI, KA, CO }, { 0, CI, KR, BU } };
+        n = build(&ba, 1, a, N(a));
+        CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_W_GRANT);
+        a[2].flags = CI | IO;
+        n = build(&ba, 1, a, N(a));
+        CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_SAFE);
+    }
+    /* every key write right alone for Users is a grant; KEY_WRITE and KEY_ALL_ACCESS too */
+    {
+        static const uint32_t key_rights[] = { 0x2, 0x4, 0x20, 0x10000, 0x40000, 0x80000, 0x2000000, 0x10000000,
+                                               0x40000000, KW, KA };
+        uint32_t i;
+
+        for (i = 0; i < N(key_rights); i++)
+        {
+            ACE_T a[] = { { 0, 0, key_rights[i], BU } };
+            n = build(&sy, 1, a, N(a));
+            CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_W_GRANT);
+        }
+    }
+    /* the read-class key rights, alone and together, and the WOW64 flags, are not grants */
+    {
+        static const uint32_t read_rights[] = { 0x1, 0x8, 0x10, 0x19, KR, 0x100, 0x200, 0x20000, 0x100000 };
+        uint32_t i;
+
+        for (i = 0; i < N(read_rights); i++)
+        {
+            ACE_T a[] = { { 0, 0, read_rights[i], BU }, { 0, 0, read_rights[i], WD } };
+            n = build(&sy, 1, a, N(a));
+            CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_SAFE);
+        }
+    }
+    /* file-only write bits mean nothing on a key: FILE_DELETE_CHILD 0x40 and FILE_WRITE_ATTRIBUTES 0x100 */
+    {
+        ACE_T a[] = { { 0, 0, 0x40 | 0x100, BU } };
+        n = build(&sy, 1, a, N(a));
+        CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_SAFE);
+        CHECK_EQ(w(n, T_DIR, 0), TL4_TRUST_W_GRANT);
+    }
+    /* inherit-only, deny and no-DACL behave as for a file */
+    {
+        ACE_T a[] = { { 0, CI | IO, KA, BU } };
+        n = build(&sy, 1, a, N(a));
+        CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_SAFE);
+    }
+    {
+        ACE_T a[] = { { 1, 0, KA, WD }, { 0, 0, 0x2, BU } };
+        n = build(&sy, 1, a, N(a));
+        CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_W_GRANT);
+    }
+    n = build(&sy, 2, NULL, 0);
+    CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_W_NO_DACL);
+    /* a key with an unknown ACE type is as unsafe as a file with one */
+    {
+        ACE_T a[] = { { 9, 0, 0x1, BU } };
+        n = build(&sy, 1, a, N(a));
+        CHECK_EQ(w(n, T_KEY, 0), TL4_TRUST_W_ACE_UNKNOWN);
+    }
+}
+
 /* ---- classifier ------------------------------------------------------------------------------------------------ */
 
 static const uint16_t DESK_DEFAULT[] = { 'D', 'e', 'f', 'a', 'u', 'l', 't' };
@@ -424,6 +522,7 @@ main(void)
 {
     test_sid_length();
     test_writable();
+    test_writable_key();
     test_classify();
     test_machine_default();
     printf("%d checks, %d failures\n", checks, failures);
