@@ -77,9 +77,11 @@ This is the single normative list for Theme Loader 4. A milestone is not accepte
 | R-MOD-7 | MUST: the getters of the core return the values of the file and apply no clamp, so the corpus dump stays the test oracle. The range checks of R-MOD-3 are functions of the loader library, host-tested and fuzzed with it, driven by one table that is added to this document before any consumer (the uxtheme adapter, the DirectUI theme queries of R-DUI-15) is written. A consumer never passes a raw getter result to a system setting, a divisor, an index or an allocation size; a value outside its range is a reject of that property, not a repaired value (R-GEN-5). The core itself never uses a model value as a divisor, an index or an allocation size without its own check. |
 | R-RES-1 | MUST: strings are read with the bounded reader from the string table (16 length-prefixed strings per block, each length checked against the block). No MUI redirection. A `.mui` is opened explicitly and is subject to every requirement that applies to the style. |
 | R-RES-2 | MUST: only string ids referenced by accepted records are read. A font string is at most 255 characters; its face name is at most 31 characters. |
-| R-RES-3 | MUST: before an image reaches any decoder, a chunk walker checks: PNG signature; IHDR first, with bit depth 8, colour type 2 or 6, no interlace (widened only with corpus evidence); every chunk length inside the resource; every CRC; IEND last; no chunk type other than IHDR, PLTE, tRNS, IDAT, IEND. |
+| R-RES-3 | MUST: before an image reaches any decoder, a chunk walker checks, in one pass: the PNG signature; every chunk length inside the resource; the CRC of every chunk; IHDR first, 13 bytes, with bit depth 8, colour type 2 or 6, compression 0, filter 0, no interlace; one or more IDAT chunks, contiguous; IEND last, of length 0, and the resource ends exactly there. The only other chunk types allowed are `gAMA` (4 bytes, value not 0), `pHYs` (9 bytes, unit 0 or 1), `sRGB` (1 byte, value 0..3) and `tEXt` (at most 256 bytes: a keyword of 1..79 bytes, a NUL, then text; every byte except that NUL is printable Latin-1, 32..126 or 161..255), each at most once and before the first IDAT. The walker bounds these four and uses their values for nothing else. Every other chunk type is a reject, never skipped; this includes `PLTE` and `tRNS`, which no reference image carries. The set is widened only with corpus evidence and a commit here. |
 | R-RES-4 | MUST: image limits from section 6 are checked from IHDR before decoding, and decoded pixels are counted against the per-style budget for the life of the process. |
 | R-RES-5 | MUST: `IMAGE` and `STREAM` resources are PNG only. No BMP, no other format, no format sniffing by the decoder. |
+| R-RES-6 | MUST: a decoder receives only a private copy of the resource, of exactly the checked length, that the walker checked after the copy was taken; the copy is not changed between the check and the decoding. The size limit of section 6 is applied before the copy is made. A result of the walker is never applied to bytes it did not read (R-GEN-11). After decoding, the consumer compares the decoder's width and height with the walker's and rejects the image when they differ. This holds for every consumer of a style image, DirectUI included (R-DUI-14). |
+| R-RES-7 | MUST: an image has at most 64 chunks and at most 64 IDAT chunks (section 6); the walker stops at these counts whatever the lengths say. |
 
 ## 6. Limits
 
@@ -98,7 +100,9 @@ Corpus maxima are from the sketch (32 reference styles). A value here is normati
 | `cbData` inline | 1,608 | 65,536, and exact per type (R-V4-6) |
 | INTLIST count | 401 | 402 |
 | `IMAGE` / `STREAM` resources | 1,611 / 3 | 4,096 / 16 |
-| One image: compressed size / side / pixels | n/a / 3,720 / about 5 M | 4 MB / 8,192 / 8 M |
+| One image: compressed size (IDAT total) / side / pixels | 345,332 bytes / 3,720 / 1,237,800 | 4 MB / 8,192 / 8 M |
+| One image: resource size / chunks / IDAT chunks | 345,499 bytes / 12 / 6 | 4 MB + 64 KB / 64 / 64 |
+| One image: `tEXt` size | 27 bytes | 256 bytes |
 | Decoded pixels per style, per process | 6.48 M | 16 M |
 | Override chain depth | 2 | 8 |
 
@@ -193,7 +197,7 @@ Sections 1, 2 and 8 apply to `directui/` as they stand. Corpus figures are from 
 - R-V4-2: that the lowest ordinal wins a lookup by name is our rule; which duplicate Windows uses is a HYPOTHESIS, not measured. If a later measurement shows the other one, the rule changes here by commit.
 - R-MOD-6: that every base chain ends in `globals` is the rule of the current engine; what Windows does for a version-4 style is a HYPOTHESIS, not measured.
 - R-MOD-7: the range table (draft in `docs/design/L2-MODEL-DESIGN.md` section 6) is not normative yet; it is reviewed and moved here before the integration milestone I1 and before DirectUI theme queries.
-- R-RES-3: the allowed IHDR set must be confirmed on the corpus (colour types and interlace actually used).
+- R-RES-3: the IHDR set and the chunk set are confirmed on the corpus (30,171 images of the 32 reference styles, `docs/design/L3-IMAGES-DESIGN.md` section 2). Open: whether a third-party style outside the corpus uses `tRNS` with colour type 2 or a palette; such a style is rejected until the rule is widened here. Whether the decoder renders differently without `gAMA` and `sRGB` is a HYPOTHESIS, not measured; the rule keeps them, so it does not matter today.
 - R-PE-8: strict ordering must be confirmed on the corpus by the L0 corpus run; if a reference style is unordered, the rule becomes "linear scan, first match" by commit here.
 - Record types 240, 241, 243 and the records with a non-zero reference on value types are dropped by R-V4-8 until the sketch explains them.
 - R-DUI-6: whether any reference UIFILE holds bytes from 0x80 that are not UTF-8 (D0 says "UTF-8/ANSI"). If one does, the rule is revisited here.
