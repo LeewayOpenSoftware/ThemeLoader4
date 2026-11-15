@@ -38,7 +38,7 @@ Missing for the README's L3 line and for the adapter:
 | lengths | longest string 72 characters (a copyright notice at id 106 of Aero10 Metro); the 675 font strings are 24..40 characters; no control character in any string |
 | largest block | 668 bytes; the most blocks in one module 61 (the three Aero 7 builds: 34 non-empty strings spread over 61 blocks, mostly empty slots) |
 | references | FONT 4,209 and STRING 384 records across the 32 styles, every one resolved (0 unresolved); the STRING ones are the RMAP documentation records 601-608 → string ids 101-112 |
-| languages | one language per block everywhere (R-PE-8 already enforces one language entry per (type, name)); the stock `.mui` block ids are the same block ids a self-contained style would carry |
+| languages | one language per block in the 32 version-4 styles and the two `.mui`; the stock `.mui` block ids are the same block ids a self-contained style would carry. The shipped version-3 style is different: see section 9 |
 
 Windows' `RT_STRING` format (SOURCE: the resource compiler's layout, confirmed by every block above): block `b`
 holds the 16 strings with ids `16·(b-1) .. 16·b - 1`; each is a 16-bit character count followed by that many UTF-16
@@ -46,7 +46,7 @@ code units, no terminator; an absent string is a count of 0.
 
 ## 3. The reader (L3b)
 
-### 3.1 API (loader/include/tl4/loader/strings.h; the L1 function stays and becomes a wrapper)
+### 3.1 API (loader/include/tl4/loader/strings.h; the L1 function stays and becomes a wrapper; language parameter added in section 9)
 
 ```
 #define TL4_STR_MAX_CHARS    1024u     /* one string (corpus 72; fonts bounded further by R-RES-2 to 255) */
@@ -147,3 +147,62 @@ Measurement over the read-only work copies (research-dwm, 2026-11-15): blocks, s
 as quoted in section 2; `loader/src/v4.c` (`tl4_v4_find_string`), `loader/src/model.c` (resolution at build);
 LiberNT `dll/win32/uxtheme/system.c` (LoadStringW uses), `sdk/include/psdk/vssym32.h`. No string of the corpus is
 reproduced here beyond the length of one.
+
+## 9. Amendment of 2026-11-15 (after R-PE-8 as amended, TL4 main b220401): languages
+
+Sections 2 and 3 were written when R-PE-8 allowed one language entry per (type, name). The amended R-PE-8 allows 1..64
+entries per pair, strictly ascending ids, and `tl4_pe_find` returns the lowest id with the count in
+`tl4_resource.nlanguages`; the version-4 validator rejects any file with a multi-language pair (`nmulti_pairs != 0`),
+and `PACKTHEM_VERSION` must have exactly one entry.
+
+**VERIFIED** (2026-11-15, `tl4_loader_test_shipped` on the shipped `aero.msstyles` of the LiberNT CI image, our own
+build output from `media/themes`, read on libernt-srv): 341 data entries in 276 pairs; 5 `RT_STRING` blocks, each with
+14 language entries (the only multi-language pairs of the file); `PACKTHEM_VERSION` has one entry. So a version-4
+style or `.mui` has single-language tables by construction, while the version-3 reader path (the shipped style, the
+compatibility check the owner asked for) must read a table that has several languages per block.
+
+### 9.1 Rules
+
+- **Every entry is checked.** `tl4_strings_check` walks every language entry of every type-6 name (the enumeration
+  already visits each entry) and applies the block shape check to each one; one malformed entry in any language rejects
+  the module (R-GEN-5). `tl4_strings_stats` gains `entries` (data entries checked; `blocks` stays the pair count) and
+  `max_languages` (entries of the widest block, 1 for every version-4 file, 14 for the shipped style).
+- **Lookup language.** `locate`, `get` and `get2` take a `language` argument. `TL4_STR_LANG_LOWEST` (0xFFFFFFFF, outside
+  the 16-bit id space; 0 is the neutral language the third-party styles use and stays a valid explicit value) selects
+  the entry with the lowest id, exactly what `tl4_pe_find` returns under R-PE-8, so the version-4 path and the L1
+  wrapper keep their behaviour. An explicit id 0..65,535 selects that entry or fails with `TL4_E_NOT_FOUND`; the core
+  does no fallback between languages (the engine's `LoadStringW` MUI fallback chain is the version-3 path and stays
+  there; R-RES-1: the consumer decides the language, once).
+- **One new reader entry point**, `tl4_pe_find_language(pe, type, name, language, out)`: the leaf header check of
+  `tl4_pe_find`, then a scan of at most `TL4_PE_MAX_LANGUAGES` (64) ascending entries that stops at the first id above
+  the wanted one; bounded (R-V4-14), re-checked (R-GEN-11).
+
+### 9.2 Signatures (replacing the three of 3.1)
+
+```
+#define TL4_STR_LANG_LOWEST 0xFFFFFFFFu
+typedef struct tl4_strings_stats { uint32_t blocks, entries, strings, max_chars, longest_id, max_languages; } tl4_strings_stats;
+tl4_status tl4_strings_locate(const tl4_pe *pe, uint32_t id, uint32_t language, uint32_t *offset, uint32_t *chars);
+tl4_status tl4_strings_get(const tl4_pe *pe, uint32_t id, uint32_t language, uint16_t *out, uint32_t cap_chars, uint32_t *chars);
+tl4_status tl4_strings_get2(const tl4_strings *s, uint32_t id, uint32_t language, uint16_t *out, uint32_t cap_chars, uint32_t *chars);
+tl4_status tl4_pe_find_language(const tl4_pe *pe, const tl4_res_name *type, const tl4_res_name *name, uint32_t language, tl4_resource *out);
+```
+
+### 9.3 Tests and fuzzing added
+
+- Generated: a block with two languages (1031 then 1033) where the same id has different text per language:
+  `LOWEST` returns the 1031 text, explicit 1033 the other, explicit 1034 `TL4_E_NOT_FOUND`; the same block with the
+  second language's table malformed (length past the end) rejects the whole module while the first language alone
+  passes; 64 languages on one block pass the check, and the entry count of the stats is 64.
+- Shipped style (`TL4_SHIPPED_STYLE`, exit 77 when unset): `tl4_strings_check` passes; stats `blocks` 5, `entries` 70,
+  `max_languages` 14; for every one of the 14 ids, `get` with that explicit language succeeds for at least one string
+  of each block; `locate(LOWEST)` equals `locate(explicit lowest id)`; `get` with a buffer one short fails with
+  `TL4_E_BUFFER`. Counts only, no text reproduced (R-PROC-1).
+- `fuzz_strings`: the tail bytes also select the language (`LOWEST` or an explicit id); promises add `locate(LOWEST) ==
+  locate(lowest explicit id)` and `check` fails ⇒ stats cleared. Seeds through `mkseeds` as for the other harnesses
+  (`pe/v3_languages.bin` already carries a two-language `RT_STRING` block); the same seed directory feeds Jim 2's S2.
+
+### 9.4 Requirement wording (adds to section 6)
+
+- **R-RES-8**: "... passes the shape check at validation **for every language entry of the block** ...; a lookup names
+  the language or takes the lowest id; the core performs no language fallback."
