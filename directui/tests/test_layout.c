@@ -13,6 +13,20 @@
 
 static int failures;
 
+/* Test hook in dui_layout.c (R-GEN-11): called between the two passes. */
+extern void (*dui_layout_test_between_passes)(const uint8_t *data, size_t size);
+
+static char mutable_input[64];
+static void
+mutate(const uint8_t *data, size_t size)
+{
+    char *p = strstr(mutable_input, "<!--");
+    (void)data;
+    (void)size;
+    if (p)
+        memcpy(p, "<b/><b/><b/>", 12);
+}
+
 static void
 check(int condition, const char *what)
 {
@@ -63,6 +77,14 @@ main(void)
     /* the tokenizer's rules still apply */
     st = dui_layout_load((const uint8_t *)"<a><b></a>", 10, &l, NULL);
     check(st == DUI_E_SYNTAX && l.elements == NULL, "malformed layout refused without a partial result");
+    dui_layout_free(&l);
+
+    /* R-GEN-11: the buffer changes between the passes; the second pass must refuse */
+    strcpy(mutable_input, "<a><!--xxxxx--></a>");
+    dui_layout_test_between_passes = mutate;
+    st = dui_layout_load((const uint8_t *)mutable_input, strlen(mutable_input), &l, NULL);
+    dui_layout_test_between_passes = NULL;
+    check(st != DUI_OK && l.elements == NULL, "changing input refused without a partial result");
     dui_layout_free(&l);
 
     if (failures)

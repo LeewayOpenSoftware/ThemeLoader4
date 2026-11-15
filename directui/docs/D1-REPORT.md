@@ -29,18 +29,24 @@ Milestone D1 of ThemeLoader4, DirectUI component. Author: Stanley (Leeway Open S
   - The expression parser keeps a frame stack (nesting 8).
   - Colour resolution is a bounded loop.
   - There is no recursion on input structure (R-GEN-6).
-- **Two passes, then allocate** (R-GEN-7).
+- **Two passes, then allocate** (R-GEN-7, R-GEN-11).
   - `dui_sheets_load` and `dui_layout_load` first run the tokenizer with a counting sink. That pass allocates nothing that grows with the input.
-  - They then allocate exactly the counted sizes and fill from a private copy of the input with the same sink. Both passes must produce the same counts.
+  - They then allocate exactly the counted sizes and fill from a private copy of the input with the same sink.
+  - Because the caller's buffer may change between the passes (a shared mapping), the second pass checks every write against the allocated sizes **before** it writes. A mismatch is a reject.
+  - A test hook changes the buffer between the passes, and the tests check the reject under ASan. This fixes Jim 2's review MUST 1 on part 2.
   - A failure returns no partial result (R-GEN-5); tests check that.
 - **Spans, not pointers.** Every name and value is a `(offset, length)` span into the input (or into the private copy in a model).
 - **Theme input cannot become a tree** (R-DUI-2, R-DUI-4).
-  - `dui_sheets_load` accepts `duixml > stylesheets > style(resid) > rules` only. A rule is an opaque selector tag inside nested `<if>` scopes.
+  - `dui_sheets_load` accepts `duixml > stylesheets > style(resid) > rules` only, where `resid` is a name.
+  - A rule is an opaque selector tag inside nested `<if>` scopes. A selector element has no children; the stock sheets have none.
   - Refused: element trees, `macro`, `bind`, nested selectors and text inside a selector.
   - `dui_layout_load` is the only path to an element tree, and it is documented as consumer-only.
-- **Visual allow-list** (R-DUI-3).
+- **Visual allow-list** (R-DUI-3, the exact 18 names).
   - Kept: background, foreground, font (+style/size/weight/face), padding, margin, pressedpaddingshift, contentalign, height, width, minsize, borderthickness, bordercolor, borderstyle, transparent.
+  - R-DUI-3a: height, width, minsize, padding, margin, borderthickness and fontsize take no negative value; pressedpaddingshift may be negative.
+  - Theme-sheet limits: 4,096 `<if>` scopes, 16,384 kept declarations, 65,536 value nodes.
   - Element states on a selector (keyfocused, mousefocused, pressed, selected, mousewithin, …) are conditions. This is a HYPOTHESIS on DirectUI semantics; it is safe either way, since a condition cannot relabel or re-wire UI.
+  - An integration evaluates an unverified state or an unknown condition as false (R-DUI-10).
   - Every other attribute is dropped and counted under one of four reasons (content/accessibility, identity/structure, behaviour, unlisted).
 
 ## 3. Verification (VERIFIED: libernt-srv, docker compose project `tl4`, Ubuntu 24.04, gcc 13 / clang 18)
@@ -85,7 +91,7 @@ Milestone D1 of ThemeLoader4, DirectUI component. Author: Stanley (Leeway Open S
 - 466 opaque condition names over the corpus;
 - 3,933 attributes dropped over the corpus: 470 content/accessibility, 409 behaviour, 3,054 unlisted. The unlisted ones are mostly Explorer pane-sizer layout properties: `initialsize`, `reservedspace`, `framepersisttype`, `explorervisibility`, …
 
-## 4. Findings for the requirements
+## 4. Findings for the requirements (ruled in bb6ab70: findings 1, 3 and 4 accepted as written)
 
 1. **Stray text in the stock sheets.**
    - Every stock style sheet has a lone backslash between two rules (24 text runs over the corpus). Windows ignores it (HYPOTHESIS from it shipping).

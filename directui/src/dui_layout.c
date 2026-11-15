@@ -5,7 +5,9 @@
  * COPYRIGHT:   Copyright 2026 Leeway Open Software
  *
  * Two passes over the tokenizer, as for style sheets (R-GEN-7): count without allocating,
- * allocate exactly that, fill from a private copy, and require the same counts.
+ * allocate exactly that, fill from a private copy, and require the same counts. The input may
+ * change between the passes (R-GEN-11): every write of the second pass is checked against the
+ * allocated sizes before it happens.
  */
 
 #include <stdlib.h>
@@ -13,9 +15,13 @@
 #include <tl4/directui/dui_layout.h>
 #include <tl4/directui/dui_xml.h>
 
+/* Test hook (R-GEN-11 test): called between the passes with the caller's buffer. */
+void (*dui_layout_test_between_passes)(const uint8_t *data, size_t size);
+
 typedef struct layout_builder
 {
     int fill;
+    uint32_t cap_elements, cap_attributes;  /* fill mode: sizes allocated from pass 1 */
     dui_layout *out;
     const uint8_t *data;
     uint32_t elements, attributes, text_runs, macros, binds;
@@ -38,7 +44,11 @@ layout_sink(void *context, const dui_xml_event *ev)
                 b->binds++;
             if (b->fill)
             {
-                dui_element *e = &b->out->elements[b->elements];
+                dui_element *e;
+
+                if (b->elements >= b->cap_elements)
+                    return DUI_E_SYNTAX; /* the input changed after pass 1 (R-GEN-11) */
+                e = &b->out->elements[b->elements];
 
                 e->tag = ev->name;
                 e->parent = d > 1 ? b->open[d - 1] : DUI_LAYOUT_NONE;
@@ -62,7 +72,11 @@ layout_sink(void *context, const dui_xml_event *ev)
         case DUI_XML_ATTRIBUTE:
             if (b->fill)
             {
-                dui_attribute *a = &b->out->attributes[b->attributes];
+                dui_attribute *a;
+
+                if (b->attributes >= b->cap_attributes)
+                    return DUI_E_SYNTAX;
+                a = &b->out->attributes[b->attributes];
                 a->name = ev->name;
                 a->value = ev->value;
                 b->out->elements[b->open[d]].attribute_count++;
@@ -106,6 +120,8 @@ dui_layout_load(const uint8_t *data, size_t size, dui_layout *out, size_t *error
     st = dui_xml_parse(data, size, layout_sink, &count, NULL, error_offset);
     if (st != DUI_OK)
         return st;
+    if (dui_layout_test_between_passes)
+        dui_layout_test_between_passes(data, size);
 
     out->input = malloc(size);
     out->elements = calloc(count.elements ? count.elements : 1, sizeof(dui_element));
@@ -120,6 +136,8 @@ dui_layout_load(const uint8_t *data, size_t size, dui_layout *out, size_t *error
 
     memset(&fill, 0, sizeof(fill));
     fill.fill = 1;
+    fill.cap_elements = count.elements;
+    fill.cap_attributes = count.attributes;
     fill.out = out;
     fill.data = out->input;
     st = dui_xml_parse(out->input, size, layout_sink, &fill, NULL, error_offset);

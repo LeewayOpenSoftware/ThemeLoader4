@@ -8,7 +8,9 @@
  * consuming binary, and for tests. No integration may feed it bytes that come from a style
  * (R-DUI-4). It builds a generic element tree: every tag is kept as an opaque name, attribute
  * values are kept raw (the consumer interprets them), and macro/bind are kept as plain elements;
- * nothing is expanded or evaluated (R-DUI-16).
+ * nothing is expanded or evaluated (R-DUI-16). The second pass checks every write against the
+ * sizes allocated from the first, so a buffer that changes while it is parsed is refused
+ * (R-GEN-11).
  */
 
 #ifndef TL4_DIRECTUI_DUI_LAYOUT_H
