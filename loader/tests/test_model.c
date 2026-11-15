@@ -52,6 +52,8 @@ static void test_shape(void)
     CHECK(model.counts.globals == 3 && model.counts.sysmetrics == TL4_NO_BASE);
     CHECK(model.classes[3].base == TL4_NO_BASE && model.classes[4].base == 3 && model.classes[5].base == 4);
     CHECK(model.classes[4].nps == 4 && model.classes[5].nps == 1 && model.classes[1].nps == 0);
+    CHECK(model.rmap_nps == 1 && model.partstates[model.rmap_first_ps].area == TL4_AREA_RMAP && model.classes[0].nps == 0);
+    CHECK(model.counts.unresolved == 0 && model.has_strings == 0 && model.style.base == image);
     CHECK(model.partstates[model.classes[4].first_ps].part == 1 && model.partstates[model.classes[4].first_ps].state == 0);
     CHECK_STATUS(tl4_model_class_name(&model, 5, &s16, &chars), TL4_OK); CHECK(name_is(s16, chars, "Explorer::Button"));
     CHECK_STATUS(tl4_model_class_name(&model, 6, &s16, &chars), TL4_E_NOT_FOUND);
@@ -68,8 +70,8 @@ static void test_shape(void)
         for (i = 1; i < model.nprops; i++)
         {
             const tl4_prop *a = &model.props[i - 1], *b = &model.props[i];
-            uint64_t ka = ((uint64_t)a->class_ordinal << 40) | ((uint64_t)a->part << 32) | ((uint64_t)a->state << 16) | a->name_id;
-            uint64_t kb = ((uint64_t)b->class_ordinal << 40) | ((uint64_t)b->part << 32) | ((uint64_t)b->state << 16) | b->name_id;
+            uint64_t ka = ((uint64_t)a->area << 56) | ((uint64_t)a->class_ordinal << 40) | ((uint64_t)a->part << 32) | ((uint64_t)a->state << 16) | a->name_id;
+            uint64_t kb = ((uint64_t)b->area << 56) | ((uint64_t)b->class_ordinal << 40) | ((uint64_t)b->part << 32) | ((uint64_t)b->state << 16) | b->name_id;
             if (ka >= kb) ok = 0;
         }
         CHECK(ok);
@@ -94,8 +96,11 @@ static void test_search_order(void)
     CHECK_STATUS(tl4_model_find(&model, 5, 0, 0, 3804, &p), TL4_OK); CHECK(p->origin == TL4_PO_GLOBAL);
     /* a descriptor name (no base, no part-states) still reaches globals */
     CHECK_STATUS(tl4_model_find(&model, 1, 0, 0, 3804, &p), TL4_OK); CHECK(p->class_ordinal == 3);
-    /* the RMAP display name lives at class 0 */
-    CHECK_STATUS(tl4_model_find(&model, 0, 0, 0, 600, &p), TL4_OK); CHECK(p->area == TL4_AREA_RMAP && p->type == TL4_V4_STRING);
+    /* the RMAP display name answers documentation queries only; a VARIANT record never answers an RMAP query (R-MOD-6) */
+    CHECK_STATUS(tl4_model_find(&model, 0, 0, 0, 600, &p), TL4_E_NOT_FOUND);
+    CHECK_STATUS(tl4_model_find_rmap(&model, 0, 0, 0, 600, &p), TL4_OK); CHECK(p->area == TL4_AREA_RMAP && p->type == TL4_V4_STRING);
+    CHECK_STATUS(tl4_model_find_rmap(&model, 3, 0, 0, 3804, &p), TL4_E_NOT_FOUND);
+    CHECK_STATUS(tl4_model_find_rmap(&model, 0, 0, 0, 601, &p), TL4_E_NOT_FOUND);
     /* misses and arguments */
     CHECK_STATUS(tl4_model_find(&model, 4, 1, 2, 9999, &p), TL4_E_NOT_FOUND);
     CHECK_STATUS(tl4_model_find(&model, 6, 0, 0, 3804, &p), TL4_E_NOT_FOUND);
@@ -138,11 +143,13 @@ static void test_getters(void)
     CHECK_STATUS(tl4_get_intlist(&model, p, a, 4, &n), TL4_OK); CHECK(n == 2 && a[0] == 7 && a[1] == 8);
     CHECK_STATUS(tl4_get_intlist(&model, p, a, 1, &n), TL4_E_BUFFER);
     CHECK_STATUS(tl4_get_metric(&model, p, &v), TL4_OK); CHECK(v == 7);
-    CHECK_STATUS(tl4_model_find(&model, 0, 0, 0, 600, &p), TL4_OK);
+    CHECK_STATUS(tl4_model_find_rmap(&model, 0, 0, 0, 600, &p), TL4_OK);
     CHECK_STATUS(tl4_get_string(&model, p, str, 64, &n), TL4_OK); CHECK(n == 4 && str[0] == 'A' && str[3] == 'o' && str[4] == 0);
+    CHECK_STATUS(tl4_get_string(&model, p, str, 5, &n), TL4_OK); CHECK(n == 4);
     CHECK_STATUS(tl4_get_string(&model, p, str, 4, &n), TL4_E_BUFFER);
     CHECK_STATUS(tl4_get_metric(&model, p, &v), TL4_E_TYPE);
     CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 803, &p), TL4_OK);
+    CHECK(p->ref_where == TL4_REF_STYLE && p->ref_size == 60 && p->cb == 0);        /* resolved at build (R-MOD-4) */
     CHECK_STATUS(tl4_get_font(&model, p, &f), TL4_OK);
     CHECK(f.face_chars == 8 && f.face[0] == 'S' && f.face[7] == 'I' && f.face[8] == 0 && f.points == 9 && f.quality == 5 && !f.bold);
     CHECK_STATUS(tl4_get_string(&model, p, str, 64, &n), TL4_E_TYPE);
@@ -207,40 +214,47 @@ static void test_sizes_and_failures(void)
     CHECK(model.counts.props == 1 && model.counts.partstates == 1);
 }
 
-/* R-GEN-11: the bytes change after the build; every getter rejects or stays inside the mapping */
+/* R-GEN-11: the bytes change after the build; every getter rejects or stays inside the mapping, and every check
+ * runs on the copy (R-MOD-4) */
 static void test_changed_input(void)
 {
     const tl4_prop *p;
-    int32_t a[402];
-    uint32_t n, c, id, off, size;
+    int32_t a[402], v;
+    uint32_t n, id, off, size;
     uint16_t str[64];
     tl4_font f;
     size_t bytes;
     v4f_default(&parts);
     CHECK_STATUS(build(), TL4_OK);
     bytes = pe.size;
-    /* shrink the view: the model's offsets now point past the end */
-    pe.size = 0x200;
-    CHECK_STATUS(tl4_model_find(&model, 4, 2, 0, 6000, &p), TL4_OK);        /* the arrays are ours, untouched */
-    CHECK_STATUS(tl4_get_intlist(&model, p, a, 402, &n), TL4_E_TRUNCATED);
-    CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 3804, &p), TL4_OK);
-    CHECK_STATUS(tl4_get_color(&model, p, &c), TL4_E_TRUNCATED);
-    CHECK_STATUS(tl4_model_class_ascii(&model, "Button", &n), TL4_E_TRUNCATED);
-    pe.size = bytes;
-    /* corrupt the INTLIST count in place: the getter re-checks it */
+    /* the INTLIST count word is not read: the model's size rules (R-MOD-4) */
     CHECK_STATUS(tl4_model_find(&model, 4, 2, 0, 6000, &p), TL4_OK);
     put32(image + model.area_off[TL4_AREA_VARIANT] + p->data_off, 500);
-    CHECK_STATUS(tl4_get_intlist(&model, p, a, 402, &n), TL4_E_TRUNCATED);
+    CHECK_STATUS(tl4_get_intlist(&model, p, a, 402, &n), TL4_OK); CHECK(n == 2 && a[0] == 7 && a[1] == 8);
+    CHECK_STATUS(tl4_get_metric(&model, p, &v), TL4_OK); CHECK(v == 7);
     put32(image + model.area_off[TL4_AREA_VARIANT] + p->data_off, 2);
-    CHECK_STATUS(tl4_get_intlist(&model, p, a, 402, &n), TL4_OK);
+    /* the STRING terminator is checked on the copy */
+    CHECK_STATUS(tl4_model_find_rmap(&model, 0, 0, 0, 600, &p), TL4_OK);
+    image[model.area_off[TL4_AREA_RMAP] + p->data_off + p->cb - 2] = 'x';
+    CHECK_STATUS(tl4_get_string(&model, p, str, 64, &n), TL4_E_TRUNCATED);
+    image[model.area_off[TL4_AREA_RMAP] + p->data_off + p->cb - 2] = 0;
+    CHECK_STATUS(tl4_get_string(&model, p, str, 64, &n), TL4_OK);
+    /* the font string is copied, then parsed: a changed string is a syntax error, never a read past the copy */
+    CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 803, &p), TL4_OK);
+    CHECK(p->ref_where == TL4_REF_STYLE);
+    image[p->ref_off + 2 * 10] = '#';                                     /* "Segoe UI, #, ..." */
+    CHECK_STATUS(tl4_get_font(&model, p, &f), TL4_E_FONT_SYNTAX);
+    image[p->ref_off + 2 * 10] = '9';
+    CHECK_STATUS(tl4_get_font(&model, p, &f), TL4_OK);
     /* overwrite the whole image with noise: no getter may read outside (ASan), every call returns a status */
     memset(image, 0xA5, bytes);
     CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 803, &p), TL4_OK);
-    (void)tl4_get_font(&model, p, &f);
+    CHECK_STATUS(tl4_get_font(&model, p, &f), TL4_E_FONT_SYNTAX);
     CHECK_STATUS(tl4_model_find(&model, 4, 1, 0, 3001, &p), TL4_OK);
-    (void)tl4_get_filename(&model, p, &id, &off, &size);
-    CHECK_STATUS(tl4_model_find(&model, 0, 0, 0, 600, &p), TL4_OK);
-    (void)tl4_get_string(&model, p, str, 64, &n);
+    CHECK_STATUS(tl4_get_filename(&model, p, &id, &off, &size), TL4_OK);  /* a range resolved at build, still inside */
+    CHECK(off + size <= bytes);
+    CHECK_STATUS(tl4_model_find_rmap(&model, 0, 0, 0, 600, &p), TL4_OK);
+    CHECK_STATUS(tl4_get_string(&model, p, str, 64, &n), TL4_E_TRUNCATED); /* no NUL in the noise */
     (void)tl4_model_class_ascii(&model, "Button", &n);
     CHECK(1);
 }

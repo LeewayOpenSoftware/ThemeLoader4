@@ -31,21 +31,25 @@ static int counts_equal(const tl4_model_counts *a, const tl4_model_counts *b)
            a->sysmetrics == b->sysmetrics;
 }
 
-static void queries(const tl4_model *m, const tl4_pe *pe, const uint8_t *q, int changed)
+static void queries(const tl4_model *m, const uint8_t *q, int changed)
 {
+    const tl4_pe *pe = &m->style;
     uint32_t i, ord, chars, id, off, size, cnt;
     const uint8_t *s16;
     int32_t v, a[402];
     uint16_t str[128];
     tl4_font f;
-    const tl4_prop *p;
+    const tl4_prop *p, *p2;
     for (i = 0; i < 4; i++)
     {
         uint32_t cls = m->nclasses ? ((uint32_t)q[4 * i] | ((uint32_t)q[4 * i + 1] << 8)) % (m->nclasses + 1u) : 0;
         uint32_t part = q[4 * i + 2], state = q[4 * i + 3];
         uint32_t name = 1u + (((uint32_t)q[(4 * i + 5) % 16] << 8 | q[(4 * i + 7) % 16]) % 9000u);
         tl4_status st = tl4_model_find(m, cls, part, state, name, &p);
+        if (tl4_model_find_rmap(m, cls, part, state, name, &p2) == TL4_OK) PROMISE(p2 >= m->props && p2 < m->props + m->nprops && p2->area == TL4_AREA_RMAP);
+        else PROMISE(p2 == NULL);
         if (st != TL4_OK) { PROMISE(p == NULL); continue; }
+        PROMISE(p->area == TL4_AREA_VARIANT);
         PROMISE(p >= m->props && p < m->props + m->nprops);
         if (!changed) PROMISE(p->class_ordinal < m->nclasses && p->part <= 255 && p->state <= 255 && p->name_id != 0);
         (void)tl4_get_int(m, p, &v); (void)tl4_get_bool(m, p, &v); (void)tl4_get_enum(m, p, &v); (void)tl4_get_metric(m, p, &v);
@@ -124,6 +128,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         PROMISE(p->class_ordinal < m.nclasses && p->area <= TL4_AREA_RMAP);
         PROMISE(p->reference == 0 || p->cb == 0);
         PROMISE(p->data_off <= m.area_size[p->area] && p->cb <= m.area_size[p->area] - p->data_off);
+        PROMISE(p->ref_where <= TL4_REF_STRINGS && (p->reference != 0 || p->ref_where == TL4_REF_UNRESOLVED));
+        if (p->ref_where == TL4_REF_STYLE) PROMISE(p->ref_off <= pe.size && p->ref_size <= pe.size - p->ref_off);
+        if (i) PROMISE(m.props[i - 1].area <= p->area);
         if (i) PROMISE(!(m.props[i - 1].class_ordinal == p->class_ordinal && m.props[i - 1].part == p->part &&
                          m.props[i - 1].state == p->state && m.props[i - 1].name_id == p->name_id));   /* deduplicated */
     }
@@ -132,11 +139,22 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     for (i = 0; i < m.nclasses; i++)
         PROMISE(m.classes[i].first_ps + m.classes[i].nps <= m.npartstates && (m.classes[i].base == TL4_NO_BASE || m.classes[i].base < m.nclasses));
 
-    queries(&m, &pe, q, 0);
+    queries(&m, q, 0);
 
     /* the input changes under the model (R-GEN-11): the second half repeated overwrites the buffer */
     for (i = 0; i < size; i++) copy[i] = data[size / 2 + (i % (size - size / 2))];
-    queries(&m, &pe, q, 1);
+    queries(&m, q, 1);
+
+    /* the input changes between the sizing validation and the build (MUST 7): the build with the buffer sized for the
+     * old bytes fails cleanly or builds a model that is consistent on its own */
+    st2 = tl4_model_build(&pe, 0, buf2, need, &m2);
+    if (st2 != TL4_OK) PROMISE(m2.classes == NULL && m2.nprops == 0);
+    else
+    {
+        PROMISE(m2.nprops + m2.counts.duplicate_props <= s.variant.records + s.rmap.records);
+        PROMISE(m2.npartstates <= s.variant.partstates + s.rmap.partstates && m2.nclasses == s.cmap_names);
+        queries(&m2, q, 0);
+    }
 
     free(buf); free(buf2); free(copy);
     return 0;
