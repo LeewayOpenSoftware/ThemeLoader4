@@ -108,9 +108,10 @@ static int text_shape_ok(const uint8_t *p, uint32_t n)
     return nul != n && nul >= 1 && nul <= 79;                             /* exactly one NUL, after 1..79 keyword bytes */
 }
 
-/* The one pass over the chunks: the whole check, CRCs included, every time; with `cb` it also hands out the IDAT
- * ranges (tl4_png_idat_enum). There is no second parser. */
-static tl4_status walk(const uint8_t *data, uint32_t size, tl4_png_info *info, tl4_png_idat_cb cb, void *context, int *stopped)
+/* The one pass over the chunks: the whole check, CRCs included, every time; with the two arrays (of
+ * TL4_PNG_MAX_IDAT_CHUNKS entries) it also records the IDAT ranges, which tl4_png_idat_enum hands out only after the
+ * pass accepted the whole image. There is no second parser. */
+static tl4_status walk(const uint8_t *data, uint32_t size, tl4_png_info *info, uint32_t *idat_off, uint32_t *idat_len)
 {
     uint64_t off = 8;
     uint32_t seen_ancillary = 0;       /* bit i: allowed_ancillary[i] seen */
@@ -158,18 +159,14 @@ static tl4_status walk(const uint8_t *data, uint32_t size, tl4_png_info *info, t
             info->idat_chunks++;
             info->idat_bytes = (uint32_t)idat_total;
             seen_idat = 1; idat_open = 1;
-            if (cb)
-            {
-                int r = cb((uint32_t)(off + 8), length, context);
-                if (r) { if (stopped) *stopped = r; return TL4_OK; }
-            }
+            if (idat_off) { idat_off[info->idat_chunks - 1] = (uint32_t)(off + 8); idat_len[info->idat_chunks - 1] = length; }
         }
         else
         {
             idat_open = 0;
             if (type == T_IEND)
             {
-                if (!seen_idat || length != 0) return TL4_E_PNG_CHUNK;
+                if (!seen_idat || idat_total == 0 || length != 0) return TL4_E_PNG_CHUNK;   /* some compressed data, an empty IEND */
                 seen_iend = 1;
             }
             else if (type == T_IHDR)
@@ -200,7 +197,7 @@ tl4_status tl4_png_check(const uint8_t *data, uint32_t size, tl4_png_info *info)
     tl4_status st;
     if (!info) return TL4_E_ARG;
     clear_info(info);
-    st = walk(data, size, info, 0, 0, 0);
+    st = walk(data, size, info, 0, 0);
     if (st != TL4_OK) clear_info(info);
     return st;
 }
@@ -208,10 +205,19 @@ tl4_status tl4_png_check(const uint8_t *data, uint32_t size, tl4_png_info *info)
 tl4_status tl4_png_idat_enum(const uint8_t *data, uint32_t size, tl4_png_idat_cb cb, void *context, int *stopped)
 {
     tl4_png_info scratch;
+    uint32_t off[TL4_PNG_MAX_IDAT_CHUNKS], len[TL4_PNG_MAX_IDAT_CHUNKS], i;
+    tl4_status st;
     if (stopped) *stopped = 0;
     if (!cb) return TL4_E_ARG;
     clear_info(&scratch);
-    return walk(data, size, &scratch, cb, context, stopped);
+    st = walk(data, size, &scratch, off, len);
+    if (st != TL4_OK) return st;                                          /* no range of a rejected image */
+    for (i = 0; i < scratch.idat_chunks; i++)
+    {
+        int r = cb(off[i], len[i], context);
+        if (r) { if (stopped) *stopped = r; break; }                          /* a stop is harmless: the check is done */
+    }
+    return TL4_OK;
 }
 
 tl4_status tl4_pixel_budget_take(tl4_pixel_budget *budget, uint64_t pixels)

@@ -53,9 +53,11 @@ static void test_good(void)
     n = pngb_image(img, sizeof(img), 3, 3720, 2, 300, 3, 1, 0);
     CHECK_STATUS(tl4_png_check(img, n, &info), TL4_OK);
     CHECK(info.has_srgb && !info.has_text && info.idat_chunks == 3 && info.idat_bytes == 300 && info.colour_type == 2 && info.pixels == 11160);
-    n = pngb_image(img, sizeof(img), 1, 1, 6, 0, 1, 1, 1);
+    n = pngb_image(img, sizeof(img), 1, 1, 6, 1, 1, 1, 1);
     CHECK_STATUS(tl4_png_check(img, n, &info), TL4_OK);
-    CHECK(info.chunks == 7 && info.idat_bytes == 0 && info.pixels == 1);
+    CHECK(info.chunks == 7 && info.idat_bytes == 1 && info.pixels == 1);
+    n = pngb_image(img, sizeof(img), 1, 1, 6, 0, 1, 1, 1);
+    expect_reject(n, TL4_E_PNG_CHUNK, "no compressed data at all");
     /* the bare minimum: IHDR, IDAT, IEND */
     {
         uint32_t off = pngb_begin(img, sizeof(img));
@@ -288,10 +290,15 @@ static void test_enum_and_budget(void)
     CHECK_STATUS(tl4_png_idat_enum(img, n, enum_cb, acc, &stopped), TL4_OK);
     CHECK(acc[0] == 2 && stopped == 9);
     CHECK_STATUS(tl4_png_idat_enum(img, n, 0, acc, &stopped), TL4_E_ARG);
-    img[n - 1] ^= 1;                                                      /* the same pass: the CRC is checked again */
-    acc[0] = 0; acc[3] = 0;
-    CHECK_STATUS(tl4_png_idat_enum(img, n, enum_cb, acc, &stopped), TL4_E_PNG_CRC);
+    /* a rejected image hands out no range: the last chunk's CRC, then a trailing byte, each with zero callbacks */
     img[n - 1] ^= 1;
+    acc[0] = 0; acc[3] = 0;
+    CHECK_STATUS(tl4_png_idat_enum(img, n, enum_cb, acc, &stopped), TL4_E_PNG_CRC); CHECK(acc[0] == 0);
+    img[n - 1] ^= 1;
+    img[n] = 0; acc[0] = 0;
+    CHECK_STATUS(tl4_png_idat_enum(img, n + 1, enum_cb, acc, &stopped), TL4_E_PNG_CHUNK); CHECK(acc[0] == 0);
+    acc[0] = 0;
+    CHECK_STATUS(tl4_png_idat_enum(img, n, enum_cb, acc, &stopped), TL4_OK); CHECK(acc[0] == 3);
     CHECK_STATUS(tl4_png_idat_enum(img, n - 1, enum_cb, acc, &stopped), TL4_E_PNG_CHUNK);
     /* the budget */
     CHECK_STATUS(tl4_pixel_budget_take(&b, 60), TL4_OK); CHECK(b.used == 60);

@@ -63,7 +63,8 @@ typedef struct tl4_png_info {
 tl4_status tl4_png_check(const uint8_t *data, uint32_t size, tl4_png_info *info);
 
 /* The IDAT chunk data ranges in file order, as (offset, size) into `data`, for a consumer that concatenates them for
- * a decoder: tl4_png_check's own single pass with a callback, every check and every CRC again (MUST 2, R-GEN-11). */
+ * a decoder: tl4_png_check's own single pass, every check and every CRC again (MUST 2, R-GEN-11); the ranges are
+ * handed out only after the whole image passed, and a callback stop is harmless. */
 typedef int (*tl4_png_idat_cb)(uint32_t offset, uint32_t size, void *context);
 tl4_status tl4_png_idat_enum(const uint8_t *data, uint32_t size, tl4_png_idat_cb cb, void *context);
 
@@ -98,8 +99,9 @@ New status codes: `TL4_E_PNG_SIGNATURE`, `TL4_E_PNG_CHUNK` (length, order, repea
      `eXIf`, private types): a reject (R-GEN-5: never skipped).
 4. Done only when IEND was seen; a resource that ends before IEND is a reject.
 
-`tl4_png_idat_enum` is this same pass with the callback set (MUST 2): no second parser, the CRCs are computed every
-time. The CRC table is a `static const` array in the source (MUST 3), not built at first use.
+`tl4_png_idat_enum` is this same pass (MUST 2): no second parser, the CRCs are computed every time; the IDAT ranges
+(at most 64) are collected during the pass and handed to the callback only after the image passed, so no range of a
+rejected image is ever seen by a consumer. An image whose IDAT total is 0 is a reject. The CRC table is a `static const` array in the source (MUST 3), not built at first use.
 
 Everything the walker needs is read once into locals; the decoder later reads the bytes again, so the consumer rule of
 section 5 (R-RES-6 proposal) closes that window: the consumer copies the resource once into its own buffer, runs the
@@ -130,7 +132,8 @@ ancillary ones) and the same CPU bound.
 
 The proposals as submitted, with the ruling after each:
 
-- **R-RES-3 (amend, corpus evidence of section 2)**: the allowed chunk types are IHDR, PLTE, tRNS, IDAT, IEND **and the
+- **R-RES-3 (amend, corpus evidence of section 2)**: the allowed chunk types are IHDR, IDAT, IEND (PLTE and tRNS
+  excluded, as ruled) **and the
   ancillary gAMA (4 bytes), pHYs (9), sRGB (1) and tEXt (bounded, printable, a NUL in the first 80 bytes), each at most
   once and before the first IDAT, never interpreted**. Rationale: all 30,171 reference images carry gAMA and pHYs,
   27,976 carry tEXt, 2,300 sRGB; the rule as written rejects the whole corpus. Alternative considered and not

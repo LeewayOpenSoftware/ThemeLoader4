@@ -17,7 +17,7 @@
  * reads every value once into a local (R-GEN-11), decodes nothing and knows no zlib.
  *
  * The consumer copies the resource once into its own buffer, runs the walker on the copy and decodes the copy, so the
- * decoder sees exactly the bytes that were checked (design note section 3.2, proposed R-RES-6).
+ * decoder sees exactly the bytes that were checked (design note section 3.2, R-RES-6).
  */
 #ifndef TL4_LOADER_PNG_H
 #define TL4_LOADER_PNG_H
@@ -51,8 +51,10 @@ typedef struct tl4_png_info {
 tl4_status tl4_png_check(const uint8_t *data, uint32_t size, tl4_png_info *info);
 
 /* The IDAT chunk data ranges in file order, as (offset, size) into `data`, for a consumer that concatenates the
- * compressed stream for a decoder. It is tl4_png_check's own pass with a callback: every check, CRCs included, runs
- * again (R-GEN-11); the callback returns nonzero to stop (reported through `stopped`). */
+ * compressed stream for a decoder. It is tl4_png_check's own pass: every check, CRCs included, runs again
+ * (R-GEN-11), and the callback is called only after the whole image passed, so no range of a rejected image is ever
+ * handed out. A nonzero return stops the remaining calls (reported through `stopped`) and is harmless: the check is
+ * complete by then and the status stays TL4_OK. */
 typedef int (*tl4_png_idat_cb)(uint32_t offset, uint32_t size, void *context);
 tl4_status tl4_png_idat_enum(const uint8_t *data, uint32_t size, tl4_png_idat_cb cb, void *context, int *stopped);
 

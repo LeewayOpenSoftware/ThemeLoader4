@@ -17,6 +17,14 @@
 #define PROMISE(cond) do { if (!(cond)) abort(); } while (0)
 
 struct acc { uint32_t chunks, bytes, last_end, size; };
+struct stopper { uint32_t calls, stop_at; };
+static int stop_cb(uint32_t offset, uint32_t size, void *context)
+{
+    struct stopper *s = (struct stopper *)context;
+    (void)offset; (void)size;
+    s->calls++;
+    return s->calls - 1 == s->stop_at ? 7 : 0;
+}
 
 static int idat_cb(uint32_t offset, uint32_t size, void *context)
 {
@@ -111,6 +119,15 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     a.chunks = 0; a.bytes = 0; a.last_end = 0; a.size = (uint32_t)size;
     PROMISE(tl4_png_idat_enum(copy, (uint32_t)size, idat_cb, &a, &stopped) == TL4_OK && stopped == 0);
     PROMISE(a.chunks == info.idat_chunks && a.bytes == info.idat_bytes);  /* enum agrees with check */
+    PROMISE(info.idat_bytes >= 1);
+    {
+        /* a stop at an index taken from the input: TL4_OK (the check accepted the image), the calls end there */
+        struct stopper sp;
+        sp.calls = 0; sp.stop_at = data[0] >> 1;
+        PROMISE(tl4_png_idat_enum(copy, (uint32_t)size, stop_cb, &sp, &stopped) == TL4_OK);
+        if (sp.stop_at < info.idat_chunks) PROMISE(stopped == 7 && sp.calls == sp.stop_at + 1);
+        else PROMISE(stopped == 0 && sp.calls == info.idat_chunks);
+    }
     free(copy);
     return 0;
 }
