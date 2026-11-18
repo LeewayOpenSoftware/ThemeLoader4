@@ -42,6 +42,9 @@ enum tl4_origin { TL4_PO_STATE = 0, TL4_PO_PART = 1, TL4_PO_CLASS = 2, TL4_PO_GL
 
 enum tl4_area { TL4_AREA_VARIANT = 0, TL4_AREA_RMAP = 1 };
 
+/* The three VMAP names used by the v4 adapter for GetThemeDefaults and colour/size enumeration. */
+enum tl4_default_name { TL4_DEFAULT_VARIANT = 0, TL4_DEFAULT_SIZE = 1, TL4_DEFAULT_COLOR = 2 };
+
 /* Where a resolved reference lives. */
 enum tl4_ref_where { TL4_REF_UNRESOLVED = 0, TL4_REF_STYLE = 1, TL4_REF_STRINGS = 2 };
 
@@ -104,6 +107,8 @@ typedef struct tl4_model {
     uint32_t nprops;
     tl4_prop *props;
     uint32_t *name_order;                   /* nclasses ordinals sorted by name, equal names by ordinal */
+    uint16_t default_names[3][TL4_V4_MAX_VMAP_CHARS]; /* owned VMAP copies, NUL-terminated (R-MOD-4) */
+    uint32_t default_name_chars[3];         /* code units without the NUL */
     tl4_model_counts counts;
     tl4_v4_stats stats;                     /* what the validator reported for this build */
 } tl4_model;
@@ -133,6 +138,11 @@ tl4_status tl4_model_class(const tl4_model *m, const uint8_t *utf16, uint32_t ch
 tl4_status tl4_model_class_ascii(const tl4_model *m, const char *name, uint32_t *ordinal);
 /* The name of a class ordinal: a pointer into the CMAP and its length, re-checked against the mapping. */
 tl4_status tl4_model_class_name(const tl4_model *m, uint32_t ordinal, const uint8_t **utf16, uint32_t *chars);
+
+/* An owned, NUL-terminated VMAP name and its length. The pointer stays valid for the model's lifetime and does not
+ * depend on later changes to the style mapping. */
+tl4_status tl4_model_default_name(const tl4_model *m, enum tl4_default_name which, const uint16_t **utf16,
+                                  uint32_t *chars);
 
 /* The VARIANT property (name_id) for (class, part, state) in the engine's search order (header). TL4_E_NOT_FOUND when
  * no class of the chain has it. */

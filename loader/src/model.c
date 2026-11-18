@@ -40,6 +40,26 @@ static void clear_model(tl4_model *m)
     m->counts.sysmetrics = TL4_NO_BASE;
 }
 
+/* Copy one already-validated VMAP string into the model, including its NUL. The second-pass range reads are still
+ * checked because the mapping may have changed after validation (R-GEN-11). */
+static tl4_status copy_vmap_name(const tl4_resource *res, const uint8_t *src, uint32_t chars,
+                                 uint16_t dst[TL4_V4_MAX_VMAP_CHARS], uint32_t *dst_chars)
+{
+    uint64_t off;
+    uint32_t i, ch;
+    if (!res || !res->data || !src || !dst || !dst_chars || chars >= TL4_V4_MAX_VMAP_CHARS) return TL4_E_V4_VMAP;
+    if (src < res->data || src > res->data + res->size) return TL4_E_V4_VMAP;
+    off = (uint64_t)(src - res->data);
+    for (i = 0; i <= chars; i++)
+    {
+        if (!rd16(res->data, res->size, off + 2u * i, &ch)) return TL4_E_V4_VMAP;
+        dst[i] = (uint16_t)ch;
+    }
+    if (dst[chars] != 0) return TL4_E_V4_VMAP;
+    *dst_chars = chars;
+    return TL4_OK;
+}
+
 /* ---- sizing (R-MOD-5) --------------------------------------------------------------------------------------- */
 
 static uint32_t ps_capacity(const tl4_v4_stats *s)
@@ -293,6 +313,7 @@ tl4_status tl4_model_build(const tl4_pe *style, const tl4_pe *strings, void *buf
     tl4_v4_stats s;
     tl4_resource res;
     tl4_v4_cmap cmap;
+    tl4_v4_vmap vmap;
     tl4_v4_bcmap bcmap;
     size_t need;
     uint8_t *cur;
@@ -327,6 +348,17 @@ tl4_status tl4_model_build(const tl4_pe *style, const tl4_pe *strings, void *buf
     m.partstates = (tl4_partstate *)(void *)cur;  cur += align8((uint64_t)sizeof(tl4_partstate) * ps_cap);
     m.props = (tl4_prop *)(void *)cur;            cur += align8((uint64_t)sizeof(tl4_prop) * prop_cap);
     m.name_order = (uint32_t *)(void *)cur;
+
+    /* VMAP again, then owned copies of all three defaults. No query depends on mutable input bytes (R-MOD-4). */
+    if ((st = find_named(&m.style, "VMAP", "VMAP", &res)) != TL4_OK) return st;
+    if ((st = tl4_v4_check_vmap(res.data, res.size, &vmap)) != TL4_OK) return st;
+    if (!in_range(m.style.size, res.offset, res.size)) return TL4_E_TRUNCATED;
+    if ((st = copy_vmap_name(&res, vmap.variant, vmap.variant_chars, m.default_names[TL4_DEFAULT_VARIANT],
+                             &m.default_name_chars[TL4_DEFAULT_VARIANT])) != TL4_OK) return st;
+    if ((st = copy_vmap_name(&res, vmap.size_name, vmap.size_chars, m.default_names[TL4_DEFAULT_SIZE],
+                             &m.default_name_chars[TL4_DEFAULT_SIZE])) != TL4_OK) return st;
+    if ((st = copy_vmap_name(&res, vmap.color, vmap.color_chars, m.default_names[TL4_DEFAULT_COLOR],
+                             &m.default_name_chars[TL4_DEFAULT_COLOR])) != TL4_OK) return st;
 
     /* the class map again (R-MOD-5), then every name once (R-MOD-1) */
     if ((st = find_named(&m.style, "CMAP", "CMAP", &res)) != TL4_OK) return st;
@@ -486,6 +518,19 @@ tl4_status tl4_model_class_name(const tl4_model *m, uint32_t ordinal, const uint
     if (!in_range(m->cmap_size, c->name_off, 2u * (uint64_t)c->name_chars)) return TL4_E_TRUNCATED;
     *utf16 = cm + c->name_off;
     *chars = c->name_chars;
+    return TL4_OK;
+}
+
+tl4_status tl4_model_default_name(const tl4_model *m, enum tl4_default_name which, const uint16_t **utf16,
+                                  uint32_t *chars)
+{
+    if (!utf16 || !chars) return TL4_E_ARG;
+    *utf16 = 0; *chars = 0;
+    if (!m || !m->classes || (uint32_t)which > TL4_DEFAULT_COLOR) return TL4_E_ARG;
+    if (m->default_name_chars[which] >= TL4_V4_MAX_VMAP_CHARS ||
+        m->default_names[which][m->default_name_chars[which]] != 0) return TL4_E_TRUNCATED;
+    *utf16 = m->default_names[which];
+    *chars = m->default_name_chars[which];
     return TL4_OK;
 }
 

@@ -41,9 +41,18 @@ static int name_is(const uint8_t *utf16, uint32_t chars, const char *ascii)
     return 1;
 }
 
+static int owned_name_is(const uint16_t *utf16, uint32_t chars, const char *ascii)
+{
+    uint32_t i;
+    if (!utf16 || chars != strlen(ascii)) return 0;
+    for (i = 0; i < chars; i++) if (utf16[i] != (uint8_t)ascii[i]) return 0;
+    return utf16[chars] == 0;
+}
+
 static void test_shape(void)
 {
     const uint8_t *s16; uint32_t chars, ord;
+    const uint16_t *owned;
     v4f_default(&parts);
     CHECK_STATUS(build(), TL4_OK);
     CHECK(model.counts.classes == 6 && model.counts.descriptors == 3);
@@ -63,6 +72,14 @@ static void test_shape(void)
     CHECK_STATUS(tl4_model_class_ascii(&model, "button", &ord), TL4_E_NOT_FOUND);        /* exact, no folding */
     CHECK_STATUS(tl4_model_class_ascii(&model, "Butto", &ord), TL4_E_NOT_FOUND);
     CHECK_STATUS(tl4_model_class_ascii(&model, "Buttons", &ord), TL4_E_NOT_FOUND);
+    CHECK_STATUS(tl4_model_default_name(&model, TL4_DEFAULT_VARIANT, &owned, &chars), TL4_OK);
+    CHECK(owned_name_is(owned, chars, "Normal"));
+    CHECK_STATUS(tl4_model_default_name(&model, TL4_DEFAULT_SIZE, &owned, &chars), TL4_OK);
+    CHECK(owned_name_is(owned, chars, "NormalSize"));
+    CHECK_STATUS(tl4_model_default_name(&model, TL4_DEFAULT_COLOR, &owned, &chars), TL4_OK);
+    CHECK(owned_name_is(owned, chars, "NormalColor"));
+    CHECK_STATUS(tl4_model_default_name(&model, (enum tl4_default_name)3, &owned, &chars), TL4_E_ARG);
+    CHECK(owned == 0 && chars == 0);
     CHECK(tl4_model_size(&model.stats) <= sizeof(buffer));
     /* props sorted by (class, part, state, name) */
     {
@@ -239,6 +256,7 @@ static void test_changed_input(void)
     int32_t a[402], v;
     uint32_t n, id, off, size;
     uint16_t str[64];
+    const uint16_t *owned;
     tl4_font f;
     size_t bytes;
     v4f_default(&parts);
@@ -265,6 +283,8 @@ static void test_changed_input(void)
     CHECK_STATUS(tl4_get_font(&model, p, &f), TL4_OK);
     /* overwrite the whole image with noise: no getter may read outside (ASan), every call returns a status */
     memset(image, 0xA5, bytes);
+    CHECK_STATUS(tl4_model_default_name(&model, TL4_DEFAULT_COLOR, &owned, &n), TL4_OK);
+    CHECK(owned_name_is(owned, n, "NormalColor"));
     CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 803, &p), TL4_OK);
     CHECK_STATUS(tl4_get_font(&model, p, &f), TL4_E_FONT_SYNTAX);
     CHECK_STATUS(tl4_model_find(&model, 4, 1, 0, 3001, &p), TL4_OK);
@@ -296,6 +316,13 @@ static void hook_long_name(const uint8_t *data, size_t size)
         uint32_t i;
         for (i = 0; i < r.size; i++) ((uint8_t *)(uintptr_t)r.data)[i] = (uint8_t)(i & 1 ? 0 : 'A');   /* one unterminated name */
     }
+}
+static void hook_bad_vmap(const uint8_t *data, size_t size)
+{
+    tl4_pe p; tl4_resource r; tl4_res_name t = tl4_res_ascii("VMAP");
+    hook_calls++;
+    if (tl4_pe_open(data, size, &p) == TL4_OK && tl4_pe_find(&p, &t, &t, &r) == TL4_OK && r.size >= 2)
+        ((uint8_t *)(uintptr_t)r.data)[r.size - 2] = 'X';
 }
 /* The refusals of the build's second pass (R-MOD-5), each reached through the hook with bytes that still validate */
 static void hook_more_records(const uint8_t *data, size_t size)
@@ -362,16 +389,19 @@ static void test_between_passes(void)
     v4f_default(&parts);
     tl4_model_test_between_passes = hook_long_name;
     CHECK_STATUS(build(), TL4_E_V4_CMAP); CHECK(hook_calls == 3 && model.classes == 0);
+    v4f_default(&parts);
+    tl4_model_test_between_passes = hook_bad_vmap;
+    CHECK_STATUS(build(), TL4_E_V4_VMAP); CHECK(hook_calls == 4 && model.classes == 0);
     /* the three capacity refusals of the second pass, each on bytes that validate on their own */
     v4f_default(&parts); tl4_model_test_between_passes = hook_more_records;
-    CHECK_STATUS(build(), TL4_E_MODEL_SIZE); CHECK(hook_calls == 4 && model.classes == 0 && model.nprops == 0);
+    CHECK_STATUS(build(), TL4_E_MODEL_SIZE); CHECK(hook_calls == 5 && model.classes == 0 && model.nprops == 0);
     v4f_default(&parts); tl4_model_test_between_passes = hook_more_names;
-    CHECK_STATUS(build(), TL4_E_MODEL_SIZE); CHECK(hook_calls == 5 && model.classes == 0);
-    v4f_default(&parts); tl4_model_test_between_passes = hook_more_partstates;
     CHECK_STATUS(build(), TL4_E_MODEL_SIZE); CHECK(hook_calls == 6 && model.classes == 0);
+    v4f_default(&parts); tl4_model_test_between_passes = hook_more_partstates;
+    CHECK_STATUS(build(), TL4_E_MODEL_SIZE); CHECK(hook_calls == 7 && model.classes == 0);
     tl4_model_test_between_passes = 0;
     v4f_default(&parts);
-    CHECK_STATUS(build(), TL4_OK); CHECK(hook_calls == 6);
+    CHECK_STATUS(build(), TL4_OK); CHECK(hook_calls == 7);
     /* a property that is not the model's own is refused by every getter */
     {
         tl4_prop foreign; int32_t v; uint32_t c, id, off, size, n; uint16_t str[8]; tl4_font f;

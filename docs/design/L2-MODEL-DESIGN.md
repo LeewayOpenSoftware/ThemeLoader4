@@ -171,11 +171,11 @@ set:
 | `GetThemeSys*` | `tl4_model_find` on the `sysmetrics` class, part 0, state 0 | every reference style has a `sysmetrics` class with 51 properties and 6 font references (VERIFIED, class-usage table of 01); it replaces the engine's separate `tf->metrics` list (`[SysMetrics]`) |
 | `IsThemePartDefined` | `tl4_model_part_defined(class, part)`: a part-state `(part, 0)` exists in the class or its chain | the engine's `MSSTYLES_FindPart` (msstyles.c:532-545) walks the overrides too |
 | `GetThemeDocumentationProperty` | `tl4_model_find_rmap` (the RMAP area only, class 0, records 600-608) + `tl4_get_string` | the engine reads the INI `[documentation]` section (system.c:1129); the RMAP area is separate from the class queries (MUST 2) |
+| `GetThemeDefaults`, `EnumThemeColors/Sizes` | `tl4_model_default_name` | owned, NUL-terminated copies of the three validated VMAP names; later changes to the style mapping cannot change them |
 | draw.c image path | `tl4_get_filename` / `tl4_get_diskstream` | bytes to L3 |
 
-Not mirrored in L2: `GetThemeTransitionDuration` (INTLIST 6000, trivial later), `EnumThemeColors/Sizes`,
-`GetThemeDefaults` (VMAP strings: adapter, section 5), `GetThemeBitmap/GetThemeStream` (stubs in the engine today,
-draw.c:2132-2143), everything that draws.
+Not mirrored in L2: `GetThemeTransitionDuration` (INTLIST 6000, trivial later), `GetThemeBitmap/GetThemeStream`
+(stubs in the engine today, draw.c:2132-2143), everything that draws.
 
 ### 4.2 Search order (mirrors the engine)
 
