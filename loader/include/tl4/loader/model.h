@@ -166,6 +166,11 @@ tl4_status tl4_get_rect(const tl4_model *m, const tl4_prop *p, int32_t ltrb[4]);
 tl4_status tl4_get_margins(const tl4_model *m, const tl4_prop *p, int32_t lrtb[4]);     /* MARGINS */
 /* INTLIST: up to `cap` values; *count = (cb - 4) / 4 from the model (at most TL4_V4_MAX_INTLIST). */
 tl4_status tl4_get_intlist(const tl4_model *m, const tl4_prop *p, int32_t *values, uint32_t cap, uint32_t *count);
+/* TMT_TRANSITIONDURATIONS: the first INTLIST value is an N-state matrix dimension, followed by N*N millisecond
+ * durations in from-major order. States are one-based; malformed matrices are TL4_E_ARG and times outside the
+ * bounded time row are TL4_E_RANGE. */
+tl4_status tl4_get_transition_duration(const tl4_model *m, const tl4_prop *p, uint32_t from_state, uint32_t to_state,
+                                       uint32_t *duration);
 /* STRING, inline or by string-table reference: UTF-16 copy, NUL-terminated, *chars without the NUL. */
 tl4_status tl4_get_string(const tl4_model *m, const tl4_prop *p, uint16_t *out, uint32_t cap_chars, uint32_t *chars);
 /* FONT: the referenced string, copied and parsed (TL4_E_FONT_SYNTAX when it is not the known syntax). */

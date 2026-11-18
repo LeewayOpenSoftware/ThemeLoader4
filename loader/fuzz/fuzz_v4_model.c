@@ -35,7 +35,7 @@ static int counts_equal(const tl4_model_counts *a, const tl4_model_counts *b)
 static void queries(const tl4_model *m, const uint8_t *q, int changed)
 {
     const tl4_pe *pe = &m->style;
-    uint32_t i, ord, chars, id, off, size, cnt;
+    uint32_t i, ord, chars, id, off, size, cnt, duration;
     const uint8_t *s16;
     int32_t v, a[402];
     uint16_t str[128];
@@ -56,6 +56,7 @@ static void queries(const tl4_model *m, const uint8_t *q, int changed)
         (void)tl4_get_int(m, p, &v); (void)tl4_get_bool(m, p, &v); (void)tl4_get_enum(m, p, &v); (void)tl4_get_metric(m, p, &v);
         (void)tl4_get_color(m, p, &cnt); (void)tl4_get_position(m, p, a); (void)tl4_get_rect(m, p, a); (void)tl4_get_margins(m, p, a);
         if (tl4_get_intlist(m, p, a, 402, &cnt) == TL4_OK) PROMISE(cnt <= 402);
+        (void)tl4_get_transition_duration(m, p, 1u + q[4 * i] % 20u, 1u + q[4 * i + 1] % 20u, &duration);
         if (tl4_get_string(m, p, str, 128, &chars) == TL4_OK) PROMISE(chars < 128 && str[chars] == 0);
         if (tl4_get_font(m, p, &f) == TL4_OK) PROMISE(f.face_chars >= 1 && f.face_chars <= 31 && f.points >= 1 && f.points <= 255 && f.quality <= 6);
         if (tl4_get_filename(m, p, &id, &off, &size) == TL4_OK) PROMISE(id == p->reference && off <= pe->size && size <= pe->size - off);

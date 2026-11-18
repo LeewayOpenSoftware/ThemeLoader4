@@ -17,7 +17,7 @@ void v4f_default(v4f_parts *p)
     static const uint8_t one[4] = {1, 0, 0, 0};
     static const uint8_t margins[16] = {1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0};
     static const uint8_t pos[8] = {5, 0, 0, 0, 6, 0, 0, 0};
-    static const uint8_t intlist[12] = {2, 0, 0, 0, 7, 0, 0, 0, 8, 0, 0, 0}; /* count 2 */
+    static const uint8_t intlist[12] = {2, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0}; /* two values: 1-state transition matrix */
     static const uint8_t str[10] = {'A', 0, 'e', 0, 'r', 0, 'o', 0, 0, 0};
     static const uint8_t png[32] = {0x89, 'P', 'N', 'G', 13, 10, 26, 10, 0, 0, 0, 13, 'I', 'H', 'D', 'R', 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0, 0, 0};
     const char *strings[16] = {0};
@@ -43,7 +43,7 @@ void v4f_default(v4f_parts *p)
     off = v4b_record(p->variant, sizeof(p->variant), off, 3401, 208, 4, 1, 1, 0, pos, 8);          /* POSITION */
     off = v4b_record(p->variant, sizeof(p->variant), off, 3402, 209, 4, 1, 2, 0, margins, 16);     /* RECT */
     off = v4b_record(p->variant, sizeof(p->variant), off, 2201, 207, 4, 1, 2, 0, one, 4);          /* SIZE */
-    off = v4b_record(p->variant, sizeof(p->variant), off, 6000, 211, 4, 2, 0, 0, intlist, 12);     /* INTLIST */
+    off = v4b_record(p->variant, sizeof(p->variant), off, 6000, 211, 4, 2, 0, 0, intlist, sizeof(intlist)); /* INTLIST */
     off = v4b_record(p->variant, sizeof(p->variant), off, 8000, 213, 5, 0, 0, 1718, 0, 0);         /* DISKSTREAM -> STREAM 1718 */
     off = v4b_record(p->variant, sizeof(p->variant), off, 3805, 204, 5, 0, 0, 0, color, 4);        /* COLOR */
     p->variant_size = off;

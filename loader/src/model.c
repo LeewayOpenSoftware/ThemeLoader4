@@ -739,6 +739,26 @@ tl4_status tl4_get_intlist(const tl4_model *m, const tl4_prop *p, int32_t *value
     return TL4_OK;
 }
 
+tl4_status tl4_get_transition_duration(const tl4_model *m, const tl4_prop *p, uint32_t from_state, uint32_t to_state,
+                                       uint32_t *duration)
+{
+    int32_t values[TL4_V4_MAX_INTLIST];
+    uint32_t count, states, index;
+    tl4_status st;
+    if (!duration) return TL4_E_ARG;
+    *duration = 0;
+    if (from_state == 0 || to_state == 0) return TL4_E_ARG;
+    if ((st = tl4_get_intlist(m, p, values, TL4_V4_MAX_INTLIST, &count)) != TL4_OK) return st;
+    if (count < 1 || values[0] < 1) return TL4_E_ARG;
+    states = (uint32_t)values[0];
+    if (states > TL4_V4_MAX_INTLIST || states > (TL4_V4_MAX_INTLIST - 1u) / states ||
+        count != 1u + states * states || from_state > states || to_state > states) return TL4_E_ARG;
+    index = 1u + states * (from_state - 1u) + (to_state - 1u);
+    if (values[index] < 0 || values[index] > 65535) return TL4_E_RANGE;
+    *duration = (uint32_t)values[index];
+    return TL4_OK;
+}
+
 /* Copy a resolved reference (a string) into dst: at most cap bytes, range-checked against its mapping. */
 static tl4_status copy_reference(const tl4_model *m, const tl4_prop *p, uint8_t *dst, uint32_t cap, uint32_t *size)
 {

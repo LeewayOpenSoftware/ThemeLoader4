@@ -131,8 +131,8 @@ static void test_search_order(void)
 static void test_getters(void)
 {
     const tl4_prop *p;
-    int32_t v, a[4];
-    uint32_t c, n, id, off, size;
+    int32_t v, a[8];
+    uint32_t c, n, id, off, size, duration;
     uint16_t str[64];
     tl4_font f;
     v4f_default(&parts);
@@ -157,15 +157,26 @@ static void test_getters(void)
     CHECK_STATUS(tl4_model_find(&model, 4, 1, 2, 2201, &p), TL4_OK);
     CHECK_STATUS(tl4_get_int(&model, p, &v), TL4_OK); CHECK(v == 1);     /* SIZE through the INT getter */
     CHECK_STATUS(tl4_model_find(&model, 4, 2, 0, 6000, &p), TL4_OK);
-    CHECK_STATUS(tl4_get_intlist(&model, p, a, 4, &n), TL4_OK); CHECK(n == 2 && a[0] == 7 && a[1] == 8);
+    CHECK_STATUS(tl4_get_intlist(&model, p, a, 8, &n), TL4_OK);
+    CHECK(n == 2 && a[0] == 1 && a[1] == 10);
     CHECK_STATUS(tl4_get_intlist(&model, p, a, 1, &n), TL4_E_BUFFER);
-    CHECK_STATUS(tl4_get_metric(&model, p, &v), TL4_OK); CHECK(v == 7);
+    CHECK_STATUS(tl4_get_metric(&model, p, &v), TL4_OK); CHECK(v == 1);
+    CHECK_STATUS(tl4_get_transition_duration(&model, p, 1, 1, &duration), TL4_OK); CHECK(duration == 10);
+    CHECK_STATUS(tl4_get_transition_duration(&model, p, 0, 1, &duration), TL4_E_ARG); CHECK(duration == 0);
+    CHECK_STATUS(tl4_get_transition_duration(&model, p, 2, 1, &duration), TL4_E_ARG); CHECK(duration == 0);
+    put32(image + model.area_off[TL4_AREA_VARIANT] + p->data_off + 4, 2);
+    CHECK_STATUS(tl4_get_transition_duration(&model, p, 1, 1, &duration), TL4_E_ARG); CHECK(duration == 0);
+    put32(image + model.area_off[TL4_AREA_VARIANT] + p->data_off + 4, 1);
+    put32(image + model.area_off[TL4_AREA_VARIANT] + p->data_off + 8, 65536);
+    CHECK_STATUS(tl4_get_transition_duration(&model, p, 1, 1, &duration), TL4_E_RANGE); CHECK(duration == 0);
+    put32(image + model.area_off[TL4_AREA_VARIANT] + p->data_off + 8, 10);
     CHECK_STATUS(tl4_model_find_rmap(&model, 0, 0, 0, 600, &p), TL4_OK);
     CHECK_STATUS(tl4_get_string(&model, p, str, 64, &n), TL4_OK); CHECK(n == 4 && str[0] == 'A' && str[3] == 'o' && str[4] == 0);
     CHECK_STATUS(tl4_get_string(&model, p, str, 5, &n), TL4_OK); CHECK(n == 4);
     CHECK_STATUS(tl4_get_string(&model, p, str, 4, &n), TL4_E_BUFFER);
     CHECK_STATUS(tl4_get_metric(&model, p, &v), TL4_E_TYPE);
     CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 803, &p), TL4_OK);
+    CHECK_STATUS(tl4_get_transition_duration(&model, p, 1, 1, &duration), TL4_E_TYPE); CHECK(duration == 0);
     CHECK(p->ref_where == TL4_REF_STYLE && p->ref_size == 60 && p->cb == 0);        /* resolved at build (R-MOD-4) */
     CHECK_STATUS(tl4_get_font(&model, p, &f), TL4_OK);
     CHECK(f.face_chars == 8 && f.face[0] == 'S' && f.face[7] == 'I' && f.face[8] == 0 && f.points == 9 && f.quality == 5 && !f.bold);
@@ -178,6 +189,8 @@ static void test_getters(void)
     CHECK_STATUS(tl4_get_diskstream(&model, p, &id, &off, &size), TL4_OK); CHECK(id == 1718 && size == 32);
     CHECK_STATUS(tl4_get_color(&model, p, &c), TL4_E_TYPE);                /* a reference record has no inline value */
     CHECK_STATUS(tl4_get_int(&model, 0, &v), TL4_E_ARG);
+    CHECK_STATUS(tl4_get_transition_duration(&model, 0, 1, 1, &duration), TL4_E_ARG);
+    CHECK_STATUS(tl4_get_transition_duration(&model, p, 1, 1, 0), TL4_E_ARG);
     CHECK_STATUS(tl4_get_intlist(&model, p, 0, 0, &n), TL4_E_TYPE);
 }
 
@@ -265,8 +278,8 @@ static void test_changed_input(void)
     /* the INTLIST count word is not read: the model's size rules (R-MOD-4) */
     CHECK_STATUS(tl4_model_find(&model, 4, 2, 0, 6000, &p), TL4_OK);
     put32(image + model.area_off[TL4_AREA_VARIANT] + p->data_off, 500);
-    CHECK_STATUS(tl4_get_intlist(&model, p, a, 402, &n), TL4_OK); CHECK(n == 2 && a[0] == 7 && a[1] == 8);
-    CHECK_STATUS(tl4_get_metric(&model, p, &v), TL4_OK); CHECK(v == 7);
+    CHECK_STATUS(tl4_get_intlist(&model, p, a, 402, &n), TL4_OK); CHECK(n == 2 && a[0] == 1 && a[1] == 10);
+    CHECK_STATUS(tl4_get_metric(&model, p, &v), TL4_OK); CHECK(v == 1);
     put32(image + model.area_off[TL4_AREA_VARIANT] + p->data_off, 2);
     /* the STRING terminator is checked on the copy */
     CHECK_STATUS(tl4_model_find_rmap(&model, 0, 0, 0, 600, &p), TL4_OK);

@@ -167,6 +167,7 @@ set:
 | `GetThemeFilename` | `tl4_get_filename` | the engine returns a file name string; for v4 the adapter returns a synthetic `#<id>` (HYPOTHESIS: what Windows returns for a v4 style is not measured; no shipped caller is known to depend on it) |
 | `GetThemeFont` | `tl4_get_font` | the adapter converts points to `lfHeight` with the DC's `LOGPIXELSY` exactly as msstyles.c:1804 does today |
 | `GetThemeMetric` | `tl4_model_find`, then `tl4_get_metric` | the engine's rule (property.c:217-226: POSITION → x, MARGINS → cxLeftWidth, INTLIST → first, and INT, SIZE, BOOL, COLOR, ENUM): only these types, every one at least 4 bytes; never STRING, FILENAME or FONT (MUST 6) |
+| `GetThemeTransitionDuration` | `tl4_model_find` at part state 0, then `tl4_get_transition_duration` | validates the one-based N-state square matrix before selecting a bounded millisecond value |
 | `GetThemePropertyOrigin` | `tl4_prop.origin` | computed at build (3.2 step 6) |
 | `GetThemeSys*` | `tl4_model_find` on the `sysmetrics` class, part 0, state 0 | every reference style has a `sysmetrics` class with 51 properties and 6 font references (VERIFIED, class-usage table of 01); it replaces the engine's separate `tf->metrics` list (`[SysMetrics]`) |
 | `IsThemePartDefined` | `tl4_model_part_defined(class, part)`: a part-state `(part, 0)` exists in the class or its chain | the engine's `MSSTYLES_FindPart` (msstyles.c:532-545) walks the overrides too |
@@ -174,8 +175,8 @@ set:
 | `GetThemeDefaults`, `EnumThemeColors/Sizes` | `tl4_model_default_name` | owned, NUL-terminated copies of the three validated VMAP names; later changes to the style mapping cannot change them |
 | draw.c image path | `tl4_get_filename` / `tl4_get_diskstream` | bytes to L3 |
 
-Not mirrored in L2: `GetThemeTransitionDuration` (INTLIST 6000, trivial later), `GetThemeBitmap/GetThemeStream`
-(stubs in the engine today, draw.c:2132-2143), everything that draws.
+Not mirrored in L2: `GetThemeBitmap/GetThemeStream` (stubs in the engine today, draw.c:2132-2143), everything that
+draws.
 
 ### 4.2 Search order (mirrors the engine)
 
