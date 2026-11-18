@@ -3,6 +3,9 @@
 # R-GEN-9: warning-free with -Wall -Wextra -Wconversion (/W4 on MSVC), as errors.
 function(tl4_warnings target)
     if(MSVC)
+        # The core and tests intentionally use the portable C11 CRT interfaces.  Keep MSVC's
+        # non-standard "secure CRT" migration diagnostics from becoming /WX build failures.
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
         target_compile_options(${target} PRIVATE /W4 /WX)
     else()
         target_compile_options(${target} PRIVATE

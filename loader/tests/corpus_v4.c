@@ -281,7 +281,7 @@ static void check_file(const char *path, const char *name, struct totals *t)
                 int32_t v[4], list[TL4_RANGE_INTLIST_MAX];
                 uint32_t c = 0, id = 0, off = 0, sz = 0, chars = 0, col = 0;
                 uint16_t str[512];
-                tl4_font fnt;
+                tl4_font fnt = { 0 };
                 tl4_status gs = TL4_OK, rs;
                 switch (p->type)
                 {

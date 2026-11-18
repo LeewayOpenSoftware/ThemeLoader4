@@ -16,7 +16,7 @@
 static const uint32_t divisor_ids[] = { 2401, 2426 };
 /* 0..255, "every value that the consumer uses as an index into an object": no named member today (TMT_GLYPHINDEX is
  * a glyph, below); the row stays for the next one */
-static const uint32_t index_ids[1];   /* unused: the row has no member; a sized array keeps the table shape */
+static const uint32_t index_ids[1] = { 0 }; /* unused: the row has no member; a sized array keeps the table shape */
 #define N_INDEX 0u
 /* 0..65,535: TMT_GLYPHINDEX, one UTF-16 code unit of the glyph font */
 static const uint32_t glyph_ids[] = { 2418 };
