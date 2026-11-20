@@ -20,7 +20,8 @@ typedef struct v4f_parts {
     uint8_t rmap[256];       uint32_t rmap_size;
     uint8_t variant[2048];   uint32_t variant_size;
     uint8_t strings[512];    uint32_t strings_size;   /* string block #32 (ids 496..511) */
-    uint8_t image[32];       uint8_t stream[32];
+    uint8_t image[512];      uint32_t image_size;
+    uint8_t stream[512];     uint32_t stream_size;
     int omit_bcmap, omit_strings, omit_image_509;
     uint32_t extra_language_of;  /* 0 = none; else the 1-based index of the resource that gets a second language entry
                                   * (id 1031) for the R-PE-8 tests: 1 = PACKTHEM_VERSION ... 10 = the string block */

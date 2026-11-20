@@ -9,6 +9,7 @@
 #include <tl4/loader/model.h>
 #include "v4fixture.h"
 #include "v4build.h"
+#include "pngbuild.h"
 
 static int failures = 0, checks = 0;
 #define CHECK(cond) do { checks++; if (!(cond)) { failures++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); } } while (0)
@@ -47,6 +48,13 @@ static int owned_name_is(const uint16_t *utf16, uint32_t chars, const char *asci
     if (!utf16 || chars != strlen(ascii)) return 0;
     for (i = 0; i < chars; i++) if (utf16[i] != (uint8_t)ascii[i]) return 0;
     return utf16[chars] == 0;
+}
+
+static int png_info_cleared(const tl4_png_info *info)
+{
+    tl4_png_info zero;
+    memset(&zero, 0, sizeof(zero));
+    return memcmp(info, &zero, sizeof(zero)) == 0;
 }
 
 static void test_shape(void)
@@ -309,6 +317,34 @@ static void test_changed_input(void)
     CHECK(1);
 }
 
+static void test_png_copy(void)
+{
+    uint8_t copy[512];
+    const tl4_prop *p;
+    tl4_png_info info;
+    uint32_t n;
+    v4f_default(&parts);
+    parts.image_size = pngb_image(parts.image, sizeof(parts.image), 4, 3, 6, 20, 1, 1, 1);
+    parts.stream_size = pngb_image(parts.stream, sizeof(parts.stream), 2, 5, 2, 16, 2, 0, 0);
+    CHECK(parts.image_size > 0 && parts.stream_size > 0);
+    CHECK_STATUS(build(), TL4_OK);
+    CHECK_STATUS(tl4_model_find(&model, 4, 1, 0, 3001, &p), TL4_OK);
+    CHECK_STATUS(tl4_copy_png(&model, p, copy, sizeof(copy), &n, &info), TL4_OK);
+    CHECK(n == parts.image_size && info.width == 4 && info.height == 3 && info.colour_type == 6);
+    CHECK_STATUS(tl4_copy_png(&model, p, copy, n - 1, &n, &info), TL4_E_BUFFER);
+    CHECK(n == 0 && png_info_cleared(&info));
+    image[p->ref_off] = 0;
+    CHECK_STATUS(tl4_copy_png(&model, p, copy, sizeof(copy), &n, &info), TL4_E_PNG_SIGNATURE);
+    CHECK(n == 0 && png_info_cleared(&info) && copy[0] == 0);
+    image[p->ref_off] = 0x89;
+    CHECK_STATUS(tl4_model_find(&model, 5, 0, 0, 8000, &p), TL4_OK);
+    CHECK_STATUS(tl4_copy_png(&model, p, copy, sizeof(copy), &n, &info), TL4_OK);
+    CHECK(n == parts.stream_size && info.width == 2 && info.height == 5 && info.colour_type == 2);
+    CHECK_STATUS(tl4_model_find(&model, 3, 0, 0, 3804, &p), TL4_OK);
+    CHECK_STATUS(tl4_copy_png(&model, p, copy, sizeof(copy), &n, &info), TL4_E_TYPE);
+    CHECK_STATUS(tl4_copy_png(&model, p, copy, sizeof(copy), 0, &info), TL4_E_ARG);
+}
+
 /* R-GEN-11 inside the build (R-MOD-5): the bytes change between the build's validation and its second read */
 static int hook_calls;
 static void hook_untouched(const uint8_t *data, size_t size) { (void)data; (void)size; hook_calls++; }
@@ -465,6 +501,7 @@ int main(void)
     test_duplicates();
     test_sizes_and_failures();
     test_changed_input();
+    test_png_copy();
     test_between_passes();
     test_font_syntax();
     printf("%d checks, %d failures\n", checks, failures);

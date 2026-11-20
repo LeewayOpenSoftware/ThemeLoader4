@@ -62,6 +62,10 @@ typedef struct tl4_png_info {
 /* The whole check (R-RES-3/4/5). On failure *info is cleared (R-GEN-5). */
 tl4_status tl4_png_check(const uint8_t *data, uint32_t size, tl4_png_info *info);
 
+/* L2 reference + R-RES-6 bridge: range-check, copy once, then validate only the caller-owned copy. */
+tl4_status tl4_copy_png(const tl4_model *model, const tl4_prop *prop, uint8_t *copy, uint32_t cap,
+                        uint32_t *size, tl4_png_info *info);
+
 /* The IDAT chunk data ranges in file order, as (offset, size) into `data`, for a consumer that concatenates them for
  * a decoder: tl4_png_check's own single pass, every check and every CRC again (MUST 2, R-GEN-11); the ranges are
  * handed out only after the whole image passed, and a callback stop is harmless. */

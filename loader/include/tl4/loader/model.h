@@ -32,6 +32,7 @@
 #define TL4_LOADER_MODEL_H
 
 #include "v4.h"
+#include "png.h"
 
 #define TL4_NO_BASE 0xFFFFFFFFu
 #define TL4_MODEL_MAX_CLASS_QUERY (2u * TL4_V4_MAX_NAME_HALF + 2u)   /* 120 code units: the longest valid class name */
@@ -179,6 +180,10 @@ tl4_status tl4_get_font(const tl4_model *m, const tl4_prop *p, tl4_font *font);
  * chunk walker (R-RES-3); the bytes are never handed to a decoder from here. */
 tl4_status tl4_get_filename(const tl4_model *m, const tl4_prop *p, uint32_t *id, uint32_t *offset, uint32_t *size);
 tl4_status tl4_get_diskstream(const tl4_model *m, const tl4_prop *p, uint32_t *id, uint32_t *offset, uint32_t *size);
+/* Copy a FILENAME/IMAGE or DISKSTREAM/STREAM resource into caller-owned storage, then run the PNG check on that
+ * private copy (R-RES-6). On failure *size and *info are cleared; the resource-size limit is applied before copying. */
+tl4_status tl4_copy_png(const tl4_model *m, const tl4_prop *p, uint8_t *copy, uint32_t cap, uint32_t *size,
+                        tl4_png_info *info);
 /* GetThemeMetric's rule: the first 32-bit word of INT, SIZE, BOOL, ENUM, COLOR, POSITION (x), MARGINS (left) or
  * INTLIST (first value, at least one); never STRING, FILENAME or FONT (TL4_E_TYPE). */
 tl4_status tl4_get_metric(const tl4_model *m, const tl4_prop *p, int32_t *value);

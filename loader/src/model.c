@@ -938,6 +938,28 @@ tl4_status tl4_get_diskstream(const tl4_model *m, const tl4_prop *p, uint32_t *i
     return get_resource_ref(m, p, TL4_V4_DISKSTREAM, id, offset, size);
 }
 
+tl4_status tl4_copy_png(const tl4_model *m, const tl4_prop *p, uint8_t *copy, uint32_t cap, uint32_t *size,
+                        tl4_png_info *info)
+{
+    uint32_t id, off, n;
+    tl4_status st;
+    if (!size || !info) return TL4_E_ARG;
+    *size = 0;
+    memset(info, 0, sizeof(*info));
+    if (!copy || !m || !p) return TL4_E_ARG;
+    if (p->type == TL4_V4_FILENAME) st = tl4_get_filename(m, p, &id, &off, &n);
+    else if (p->type == TL4_V4_DISKSTREAM) st = tl4_get_diskstream(m, p, &id, &off, &n);
+    else return TL4_E_TYPE;
+    if (st != TL4_OK) return st;
+    if (n > TL4_PNG_MAX_RESOURCE) return TL4_E_LIMIT;
+    if (n > cap) return TL4_E_BUFFER;
+    memcpy(copy, m->style.base + off, n);                                   /* the only read of the mutable mapping */
+    st = tl4_png_check(copy, n, info);                                      /* every check runs on the private copy */
+    if (st != TL4_OK) { memset(copy, 0, n); return st; }
+    *size = n;
+    return TL4_OK;
+}
+
 tl4_status tl4_get_metric(const tl4_model *m, const tl4_prop *p, int32_t *value)
 {
     uint8_t copy[4u + 4u * TL4_V4_MAX_INTLIST];

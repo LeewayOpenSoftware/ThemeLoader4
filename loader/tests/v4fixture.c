@@ -51,6 +51,7 @@ void v4f_default(v4f_parts *p)
     p->strings_size = v4b_string_block(p->strings, sizeof(p->strings), strings);
     memcpy(p->image, png, 32);
     memcpy(p->stream, png, 32);
+    p->image_size = p->stream_size = 32;
 }
 
 size_t v4f_build(const v4f_parts *p, uint8_t *out, size_t cap)
@@ -65,9 +66,9 @@ size_t v4f_build(const v4f_parts *p, uint8_t *out, size_t cap)
     if (!p->omit_bcmap) { res[n].type_name = "BCMAP"; res[n].type_id = 0; res[n].name_name = "BCMAP"; res[n].name_id = 0; res[n].language = 0; res[n].data = p->bcmap; res[n].size = p->bcmap_size; n++; }
     res[n].type_name = "RMAP"; res[n].type_id = 0; res[n].name_name = "RMAP"; res[n].name_id = 0; res[n].language = 0; res[n].data = p->rmap; res[n].size = p->rmap_size; n++;
     res[n].type_name = "VARIANT"; res[n].type_id = 0; res[n].name_name = "NORMAL"; res[n].name_id = 0; res[n].language = 0; res[n].data = p->variant; res[n].size = p->variant_size; n++;
-    res[n].type_name = "IMAGE"; res[n].type_id = 0; res[n].name_name = 0; res[n].name_id = 508; res[n].language = 0; res[n].data = p->image; res[n].size = 32; n++;
-    if (!p->omit_image_509) { res[n].type_name = "IMAGE"; res[n].type_id = 0; res[n].name_name = 0; res[n].name_id = 509; res[n].language = 0; res[n].data = p->image; res[n].size = 32; n++; }
-    res[n].type_name = "STREAM"; res[n].type_id = 0; res[n].name_name = 0; res[n].name_id = 1718; res[n].language = 0; res[n].data = p->stream; res[n].size = 32; n++;
+    res[n].type_name = "IMAGE"; res[n].type_id = 0; res[n].name_name = 0; res[n].name_id = 508; res[n].language = 0; res[n].data = p->image; res[n].size = p->image_size; n++;
+    if (!p->omit_image_509) { res[n].type_name = "IMAGE"; res[n].type_id = 0; res[n].name_name = 0; res[n].name_id = 509; res[n].language = 0; res[n].data = p->image; res[n].size = p->image_size; n++; }
+    res[n].type_name = "STREAM"; res[n].type_id = 0; res[n].name_name = 0; res[n].name_id = 1718; res[n].language = 0; res[n].data = p->stream; res[n].size = p->stream_size; n++;
     if (!p->omit_strings) { res[n].type_name = 0; res[n].type_id = 6; res[n].name_name = 0; res[n].name_id = 32; res[n].language = 1033; res[n].data = p->strings; res[n].size = p->strings_size; n++; }
     if (p->extra_language_of >= 1 && p->extra_language_of <= n)
     {
